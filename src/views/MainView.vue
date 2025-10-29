@@ -36,7 +36,7 @@
         <div class="user-profile" v-if="user">
           <router-link to="/profile" class="profile-link">
             <div class="avatar-wrapper">
-              <img :src="user.avatar || '/img/default-avatar.png'" class="user-avatar" alt="Аватар">
+              <img :src="getAvatarUrl(user.avatar || user.avatar_url)" class="user-avatar" alt="Аватар">
             </div>
             <span class="username">{{ user.username }}</span>
           </router-link>
@@ -117,7 +117,7 @@
           <div class="panel-header">
             <h3 class="panel-title"><i class="fas fa-history"></i> История поиска</h3>
             <button 
-              v-if="searchHistory.length" 
+              v-if="user && searchHistory.length" 
               @click="clearSearchHistory" 
               class="clear-history-btn"
               title="Очистить историю"
@@ -126,35 +126,51 @@
             </button>
           </div>
           
-          <ul v-if="searchHistory.length" class="history-list">
-            <li 
-              v-for="(item, index) in searchHistory" 
-              :key="item.id || index"
-              @click="applySearchHistory(item)"
-              class="history-item"
-              :title="`Нажмите, чтобы найти ${item.term || item.query}`"
-            >
-              <i class="fas" :class="getHistoryIcon(item.type || item.search_type)"></i>
-              <div class="history-content">
-                <span class="history-term">"{{ item.term || item.query }}"</span>
-                <div class="history-details">
-                  <span class="history-type">{{ getHistoryTypeLabel(item.type || item.search_type) }}</span>
-                  <span class="history-time">{{ formatHistoryTime(item.timestamp || item.created_at) }}</span>
-                  <span v-if="item.resultsCount !== undefined || item.results_count !== undefined" 
-                        class="history-results">
-                    Найдено: {{ item.resultsCount || item.results_count || 0 }}
-                  </span>
+          <!-- Сообщение для неавторизованных пользователей -->
+          <div v-if="!user" class="auth-message">
+            <div class="auth-icon">
+              <i class="fas fa-user-lock"></i>
+            </div>
+            <h4>История поиска недоступна</h4>
+            <p>Авторизуйтесь, чтобы сохранять историю поиска и просматривать её на всех устройствах</p>
+            <button @click="goToAuth" class="auth-btn gradient-btn">
+              <i class="fas fa-sign-in-alt"></i>
+              <span>Войти в аккаунт</span>
+            </button>
+          </div>
+          
+          <!-- История для авторизованных пользователей -->
+          <div v-else>
+            <ul v-if="searchHistory.length" class="history-list">
+              <li 
+                v-for="(item, index) in searchHistory" 
+                :key="item.id || index"
+                @click="applySearchHistory(item)"
+                class="history-item"
+                :title="`Нажмите, чтобы найти ${item.term || item.query}`"
+              >
+                <i class="fas" :class="getHistoryIcon(item.type || item.search_type)"></i>
+                <div class="history-content">
+                  <span class="history-term">"{{ item.term || item.query }}"</span>
+                  <div class="history-details">
+                    <span class="history-type">{{ getHistoryTypeLabel(item.type || item.search_type) }}</span>
+                    <span class="history-time">{{ formatHistoryTime(item.timestamp || item.created_at) }}</span>
+                    <span v-if="item.resultsCount !== undefined || item.results_count !== undefined" 
+                          class="history-results">
+                      Найдено: {{ item.resultsCount || item.results_count || 0 }}
+                    </span>
+                  </div>
+                  <div v-if="item.corpus || item.floor" class="history-location">
+                    <span v-if="item.corpus">Корпус {{ item.corpus }}</span>
+                    <span v-if="item.floor">, Этаж {{ item.floor }}</span>
+                  </div>
                 </div>
-                <div v-if="item.corpus || item.floor" class="history-location">
-                  <span v-if="item.corpus">Корпус {{ item.corpus }}</span>
-                  <span v-if="item.floor">, Этаж {{ item.floor }}</span>
-                </div>
-              </div>
-            </li>
-          </ul>
-          <p v-else class="empty-message">
-            <i class="fas fa-history"></i> История поиска пуста
-          </p>
+              </li>
+            </ul>
+            <p v-else class="empty-message">
+              <i class="fas fa-history"></i> История поиска пуста
+            </p>
+          </div>
         </div>
 
         <!-- Панель фильтров -->
@@ -326,7 +342,7 @@
       <div class="three-d-scene" ref="threeDScene"></div>
       
       <div class="audience-info-3d glassmorphism" v-if="hoveredAudience3D">
-        <h4>Аудитория {{ hoveredAudience3D.num_audiences }}</h4>
+        <h4>{{ getRoomDisplayName(hoveredAudience3D) }}</h4>
         <p>Тип: {{ getAudienceTypeName(hoveredAudience3D.audience_type) }}</p>
         <button @click="openModal(hoveredAudience3D)" class="info-btn">
           <i class="fas fa-info-circle"></i> Подробнее
@@ -342,7 +358,7 @@
             <i class="fas fa-times"></i>
           </div>
           <div class="modal-header">
-            <h2>Аудитория №{{ currentAudience.num_audiences }}</h2>
+            <h2>{{ getRoomDisplayName(currentAudience) }}</h2>
             <div class="audience-meta">
               <span class="meta-item">
                 <i class="fas fa-building"></i> Корпус: {{ currentAudience.corpus }}
@@ -452,7 +468,7 @@
               </div>
               
               <div class="schedule-table-container">
-                <table v-if="groupedSchedule.length" class="schedule-table">
+                <table v-if="sortedSchedule.length" class="schedule-table">
                   <thead>
                     <tr>
                       <th>Время</th>
@@ -462,7 +478,7 @@
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="item in groupedSchedule" :key="item.key">
+                    <tr v-for="item in sortedSchedule" :key="item.key">
                       <td class="time-cell">{{ formatTime(item.time_start) }} - {{ formatTime(item.time_over) }}</td>
                       <td>{{ item.name_lesson }}</td>
                       <td class="teacher-cell">{{ item.surname }} {{ item.name }} {{ item.patronymic }}</td>
@@ -637,6 +653,13 @@ export default {
       cabinet: '#a4ca32'
     };
 
+    // Функция для преобразования времени в минуты для сортировки
+    const timeToMinutes = (timeStr) => {
+      if (!timeStr) return 0;
+      const [hours, minutes] = timeStr.split(':').map(Number);
+      return hours * 60 + minutes;
+    };
+
     // Computed properties
     const viewModeIcon = computed(() => {
       return viewMode.value === '2d' ? 'fa-cube' : 'fa-map';
@@ -729,6 +752,15 @@ export default {
       return Array.from(groupsMap.values());
     });
 
+    // ИСПРАВЛЕННОЕ: Сортировка расписания от меньшего времени к большему
+    const sortedSchedule = computed(() => {
+      return [...groupedSchedule.value].sort((a, b) => {
+        const aStart = timeToMinutes(a.time_start);
+        const bStart = timeToMinutes(b.time_start);
+        return aStart - bStart;
+      });
+    });
+
     const getMenuByCategory = computed(() => {
       if (selectedCategory.value === 'все') {
         return buffetMenu.value;
@@ -808,6 +840,32 @@ export default {
       } else {
         activePanel.value = panel;
       }
+    };
+
+    // Функция для получения правильного названия комнаты (ТОЛЬКО ДЛЯ МОДАЛЬНЫХ ОКОН)
+    const getRoomDisplayName = (audience) => {
+      if (!audience) return '';
+      
+      const numAudiences = audience.num_audiences;
+      const audienceType = audience.audience_type;
+      
+      // Если это туалет, показываем "Туалет" вместо номера
+      if (audienceType === 'toilet') {
+        return 'Туалет';
+      }
+      
+      // Если это буфет, показываем "Буфет" вместо номера
+      if (audienceType === 'cafe') {
+        return 'Буфет';
+      }
+      
+      // Если это библиотека, показываем "Библиотека" вместо номера
+      if (audienceType === 'library') {
+        return 'Библиотека';
+      }
+      
+      // Для остальных типов показываем номер аудитории
+      return `Аудитория ${numAudiences}`;
     };
 
     const getAudienceTypeName = (type) => {
@@ -926,54 +984,84 @@ export default {
       return highlightedAudiences.value.has(audience.id);
     };
 
+    // Обновленная функция поиска аудиторий
     const searchAudiences = async () => {
       if (audienceSearch.value.trim().length >= 3) {
-        const results = searchResultsAudiences.value;
-        searchResults.value = results;
-
-        if (results.length === 1) {
-          // Если найден один результат - переходим к нему
-          const audience = results[0];
-          selectCorpus(audience.corpus);
-          selectFloor(audience.floor);
-          
-          // Сохраняем в историю поиска - ПЕРЕДАЕМ ФАКТИЧЕСКИЙ ЗАПРОС
-          await addToSearchHistory(audienceSearch.value.trim(), 'Аудитория', results.length);
-          
-          // Центрируем карту на аудитории (для 2D режима)
-          setTimeout(() => {
-            centerOnAudience(audience);
-          }, 300);
-          
-          // Подсвечиваем аудиторию
-          highlightedAudiences.value.clear();
-          highlightedAudiences.value.add(audience.id);
-
-        } else if (results.length > 1) {
-          // Если найдено несколько результатов
-          showMultipleResultsNotification.value = true;
-          highlightedAudiences.value.clear();
-          results.forEach(audience => {
-            highlightedAudiences.value.add(audience.id);
-          });
-          
-          // Сохраняем в историю поиска - ПЕРЕДАЕМ ФАКТИЧЕСКИЙ ЗАПРОС
-          await addToSearchHistory(audienceSearch.value.trim(), 'Аудитория', results.length);
-          
-          // Автоматически скрываем уведомление через 5 секунд
-          setTimeout(() => {
-            showMultipleResultsNotification.value = false;
-          }, 5000);
-        } else {
-          highlightedAudiences.value.clear();
-          showMultipleResultsNotification.value = false;
-          // Сохраняем даже если результатов нет, но запрос был
-          await addToSearchHistory(audienceSearch.value.trim(), 'Аудитория', 0);
+        const searchTerm = audienceSearch.value.toLowerCase().trim();
+        
+        // Специальные случаи поиска
+        if (searchTerm === 'туалет' || searchTerm === 'tualet' || searchTerm === 'уборная') {
+          const toilets = audiences.value.filter(aud => aud.audience_type === 'toilet');
+          handleSearchResults(toilets, 'Туалет');
+          return;
         }
+        
+        if (searchTerm === 'буфет' || searchTerm === 'byst' || searchTerm === 'столовая') {
+          const cafes = audiences.value.filter(aud => aud.audience_type === 'cafe');
+          handleSearchResults(cafes, 'Буфет');
+          return;
+        }
+        
+        if (searchTerm === 'библиотека' || searchTerm === 'library') {
+          const libraries = audiences.value.filter(aud => aud.audience_type === 'library');
+          handleSearchResults(libraries, 'Библиотека');
+          return;
+        }
+        
+        // Обычный поиск по номеру аудитории
+        const results = audiences.value.filter(aud => 
+          aud.num_audiences.toLowerCase().includes(searchTerm)
+        );
+        
+        handleSearchResults(results, audienceSearch.value.trim());
       } else {
         searchResults.value = [];
         highlightedAudiences.value.clear();
         showMultipleResultsNotification.value = false;
+      }
+    };
+
+    const handleSearchResults = (results, searchTerm) => {
+      searchResults.value = results;
+      
+      if (results.length === 1) {
+        // Если найден один результат - переходим к нему
+        const audience = results[0];
+        selectCorpus(audience.corpus);
+        selectFloor(audience.floor);
+        
+        // Сохраняем в историю поиска
+        addToSearchHistory(searchTerm, 'Аудитория', results.length);
+        
+        // Центрируем карту на аудитории (для 2D режима)
+        setTimeout(() => {
+          centerOnAudience(audience);
+        }, 300);
+        
+        // Подсвечиваем аудиторию
+        highlightedAudiences.value.clear();
+        highlightedAudiences.value.add(audience.id);
+
+      } else if (results.length > 1) {
+        // Если найдено несколько результатов
+        showMultipleResultsNotification.value = true;
+        highlightedAudiences.value.clear();
+        results.forEach(audience => {
+          highlightedAudiences.value.add(audience.id);
+        });
+        
+        // Сохраняем в историю поиска
+        addToSearchHistory(searchTerm, 'Аудитория', results.length);
+        
+        // Автоматически скрываем уведомление через 5 секунд
+        setTimeout(() => {
+          showMultipleResultsNotification.value = false;
+        }, 5000);
+      } else {
+        highlightedAudiences.value.clear();
+        showMultipleResultsNotification.value = false;
+        // Сохраняем даже если результатов нет, но запрос был
+        addToSearchHistory(searchTerm, 'Аудитория', 0);
       }
     };
 
@@ -1023,9 +1111,8 @@ export default {
         const groupSchedule = response.data;
         
         highlightedAudiences.value.clear();
-        await logSearchActivity('group', groupSearch.value, groupSchedule.length);
         
-        // Сохраняем в историю поиска - ПЕРЕДАЕМ ФАКТИЧЕСКИЙ ЗАПРОС
+        // Сохраняем в историю поиска
         await addToSearchHistory(groupSearch.value.trim(), 'Группа', groupSchedule.length);
         
         groupSchedule.forEach(item => {
@@ -1049,10 +1136,8 @@ export default {
       try {
         const response = await axios.get(`/api/schedule/teacher/${encodeURIComponent(teacherSearch.value.trim())}`);
         const teacherSchedule = response.data;
-
-        await logSearchActivity('teacher', teacherSearch.value, teacherSchedule.length);
         
-        // Сохраняем в историю поиска - ПЕРЕДАЕМ ФАКТИЧЕСКИЙ ЗАПРОС
+        // Сохраняем в историю поиска
         await addToSearchHistory(teacherSearch.value.trim(), 'Преподаватель', teacherSchedule.length);
         
         highlightedAudiences.value.clear();
@@ -1127,17 +1212,18 @@ export default {
 
     const addToSearchHistory = async (term, type, resultsCount = 0) => {
       console.log('Сохранение в историю:', { term, type, resultsCount });
-      // Добавьте проверку на пустую строку
+      
       if (!term || term.trim() === '') {
         return;
       }
       
       if (!user.value) {
-        // Для неавторизованных пользователей сразу сохраняем в localStorage
+        // Для неавторизованных пользователей сохраняем в localStorage
         saveToLocalStorage(term, type, resultsCount);
         return;
       }
       
+      // Для авторизованных пользователей сохраняем на сервер
       try {
         await axios.post('/api/profile/search-history', {
           search_type: type.toLowerCase(),
@@ -1147,7 +1233,7 @@ export default {
           floor: selectedFloor.value
         });
         
-        // После сохранения в БД обновляем историю
+        // После сохранения обновляем историю
         await loadSearchHistory();
         
       } catch (error) {
@@ -1158,7 +1244,6 @@ export default {
     };
 
     const saveToLocalStorage = (term, type, resultsCount = 0) => {
-      // Добавьте проверку на пустую строку
       if (!term || term.trim() === '') {
         return;
       }
@@ -1181,8 +1266,8 @@ export default {
       } else {
         // Добавляем новую запись
         history.unshift({
-          id: Date.now(), // Добавляем ID для ключа
-          term: term.trim(), // Обрезаем пробелы
+          id: Date.now(),
+          term: term.trim(),
           type,
           timestamp: new Date().toLocaleTimeString(),
           resultsCount: resultsCount,
@@ -1206,21 +1291,34 @@ export default {
 
     const loadSearchHistory = async () => {
       if (user.value) {
-        // Загружаем из базы данных для авторизованных пользователей
+        // Для авторизованных пользователей - загружаем с сервера
         try {
           const response = await axios.get('/api/profile/search-history');
-          console.log('Raw response from API:', response.data); // Отладочное сообщение
+          console.log('History from API:', response.data);
           
-          // Просто присваиваем данные как есть
-          searchHistory.value = response.data;
+          // Форматируем данные с сервера для единообразия
+          searchHistory.value = response.data.map(item => ({
+            id: item.id,
+            term: item.query,
+            type: getHistoryTypeLabel(item.search_type),
+            timestamp: formatHistoryTime(item.created_at),
+            resultsCount: item.results_count,
+            corpus: item.corpus,
+            floor: item.floor,
+            // Сохраняем оригинальные данные для совместимости
+            search_type: item.search_type,
+            query: item.query,
+            results_count: item.results_count,
+            created_at: item.created_at
+          }));
           
-          console.log('Final search history:', searchHistory.value); // Отладочное сообщение
         } catch (error) {
           console.error('Ошибка загрузки истории поиска:', error);
-          loadFromLocalStorage();
+          // При ошибке показываем пустую историю
+          searchHistory.value = [];
         }
       } else {
-        // Для неавторизованных пользователей используем localStorage
+        // Для неавторизованных - загружаем из localStorage
         loadFromLocalStorage();
       }
     };
@@ -1236,7 +1334,6 @@ export default {
       };
       return types[type.toLowerCase()] || type;
     };
-
 
     const loadFromLocalStorage = () => {
       const history = JSON.parse(localStorage.getItem('searchHistory') || '[]');
@@ -1262,7 +1359,6 @@ export default {
         case 'аудитория':
         case 'audience':
           audienceSearch.value = searchTerm;
-          // Ждем обновления DOM и запускаем поиск
           await nextTick();
           await searchAudiences();
           break;
@@ -1708,6 +1804,26 @@ export default {
       }
     };
 
+    const getAvatarUrl = (avatarPath) => {
+      if (!avatarPath || avatarPath === '/img/default-avatar.png') {
+        return '/img/default-avatar.png';
+      }
+      
+      if (avatarPath.startsWith('http')) {
+        return avatarPath;
+      }
+      
+      // Для аватаров из uploads добавляем базовый URL сервера
+      if (avatarPath.startsWith('/uploads/')) {
+        const baseUrl = window.location.hostname === 'localhost' 
+          ? 'http://localhost:3001' 
+          : '';
+        return `${baseUrl}${avatarPath}?t=${new Date().getTime()}`;
+      }
+      
+      return `${avatarPath}?t=${new Date().getTime()}`;
+    };
+
     const formatTime = (dateString) => {
       if (!dateString) return '';
       
@@ -2015,7 +2131,7 @@ export default {
       // Обновляем время последнего входа
       if (user.value) {
         await updateLastLogin();
-        await fetchFavorites();
+        // await fetchFavorites();
       }
     });
 
@@ -2092,6 +2208,7 @@ export default {
       currentMapImage,
       filteredAudiences,
       groupedSchedule,
+      sortedSchedule, // Добавлено исправленное расписание
       
       mapContent,
       svgElement,
@@ -2151,6 +2268,8 @@ export default {
       applySearchHistory,
       notificationMessage,
       clearSearchHistory,
+      getAvatarUrl,
+      getRoomDisplayName, // Добавлено
     };
   }
 };
@@ -3664,6 +3783,37 @@ export default {
 .item-availability.unavailable {
   background-color: #fff5f5;
   color: #e53e3e;
+}
+
+/* Стили для сообщения об авторизации */
+.auth-message {
+  text-align: center;
+  padding: 40px 20px;
+  background-color: var(--bg-tertiary);
+  border-radius: 12px;
+  margin-top: 20px;
+}
+
+.auth-icon {
+  font-size: 3rem;
+  color: var(--accent-primary);
+  margin-bottom: 16px;
+}
+
+.auth-message h4 {
+  margin: 0 0 12px 0;
+  color: var(--text-primary);
+  font-size: 1.2rem;
+}
+
+.auth-message p {
+  margin: 0 0 24px 0;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.auth-btn {
+  margin: 0 auto;
 }
 
 /* Анимации */

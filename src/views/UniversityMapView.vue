@@ -27,7 +27,7 @@
         <div class="user-profile" v-if="user">
           <router-link to="/profile" class="profile-link">
             <div class="avatar-wrapper">
-              <img :src="user.avatar || '/img/default-avatar.png'" class="user-avatar" alt="Аватар">
+              <img :src="getAvatarUrl(user.avatar || user.avatar_url)" class="user-avatar" alt="Аватар">
             </div>
             <span class="username">{{ user.username }}</span>
           </router-link>
@@ -548,6 +548,25 @@ export default {
       return icons[type] || 'fa-search';
     };
 
+    const getAvatarUrl = (avatarPath) => {
+      if (!avatarPath || avatarPath === '/img/default-avatar.png') {
+        return '/img/default-avatar.png';
+      }
+      
+      if (avatarPath.startsWith('http')) {
+        return avatarPath;
+      }
+      
+      if (avatarPath.startsWith('/uploads/')) {
+        const baseUrl = window.location.hostname === 'localhost' 
+          ? 'http://localhost:3001' 
+          : '';
+        return `${baseUrl}${avatarPath}?t=${new Date().getTime()}`;
+      }
+      
+      return `${avatarPath}?t=${new Date().getTime()}`;
+    };
+
     const fetchBuildings = async () => {
       try {
         const response = await axios.get('/api/territory/buildings');
@@ -917,6 +936,7 @@ export default {
       getBuildingColor,
       getLandmarkColor,
       getHistoryIcon,
+      getAvatarUrl,
       goToBuildingsMap,
       filterSportSchedule
     };

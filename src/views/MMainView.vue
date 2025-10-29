@@ -22,7 +22,7 @@
             <i class="fas" :class="viewModeIcon"></i>
           </button>
           <div class="user-avatar-mini" @click="toggleUserMenu" :class="{ 'has-notification': hasNotifications }">
-            <img :src="user?.avatar || '/img/default-avatar.png'" alt="Профиль">
+            <img :src="getAvatarUrl(user?.avatar || user?.avatar_url)" alt="Профиль">
           </div>
         </div>
       </div>
@@ -33,8 +33,9 @@
       <div class="mobile-menu-overlay" v-if="showMobileMenu" @click="closeMobileMenu">
         <div class="mobile-menu" @click.stop>
           <div class="menu-header">
+            <!-- В шаблоне MobileMapView -->
             <div class="menu-user" v-if="user" @click="goToProfile">
-              <img :src="user.avatar || '/img/default-avatar.png'" class="user-avatar-large">
+              <img :src="getAvatarUrl(user.avatar || user.avatar_url)" class="user-avatar-large">
               <div class="user-info">
                 <span class="username">{{ user.username }}</span>
                 <span class="user-status">Онлайн</span>
@@ -324,14 +325,25 @@
         </div>
         
         <div class="panel-header">
-          <h3 class="panel-title">
-            <i class="fas" :class="getPanelIcon(activePanel)"></i>
-            {{ getPanelTitle(activePanel) }}
-          </h3>
-          <button class="close-panel" @click="closePanel">
-            <i class="fas fa-times"></i>
-          </button>
-        </div>
+      <h3 class="panel-title">
+        <i class="fas" :class="getPanelIcon(activePanel)"></i>
+        {{ getPanelTitle(activePanel) }}
+      </h3>
+      <div class="panel-actions">
+        <!-- Кнопка очистки истории только для панели истории -->
+        <button 
+          v-if="activePanel === 'history' && searchHistory.length && user" 
+          @click="clearHistory" 
+          class="clear-history-btn"
+          title="Очистить историю"
+        >
+          <i class="fas fa-trash"></i>
+        </button>
+        <button class="close-panel" @click="closePanel">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+    </div>
 
         <div class="panel-content" ref="panelContent">
           <!-- Панель поиска -->
@@ -393,33 +405,53 @@
 
           <!-- Панель истории -->
           <div v-if="activePanel === 'history'" class="history-panel">
-            <div class="history-header">
-              <span>История поиска</span>
-              <button v-if="searchHistory.length" @click="clearHistory" class="clear-history">
-                <i class="fas fa-trash"></i>
+            
+            <!-- Сообщение для неавторизованных пользователей -->
+            <div v-if="!user" class="auth-message">
+              <div class="auth-icon">
+                <i class="fas fa-user-lock"></i>
+              </div>
+              <h4>История поиска недоступна</h4>
+              <p>Авторизуйтесь, чтобы сохранять историю поиска и просматривать её на всех устройствах</p>
+              <button @click="goToAuth" class="auth-btn gradient-btn">
+                <i class="fas fa-sign-in-alt"></i>
+                <span>Войти в аккаунт</span>
               </button>
             </div>
-            <div class="history-list">
-              <div 
-                v-for="(item, index) in searchHistory" 
-                :key="index"
-                @click="applySearchHistory(item)"
-                class="history-item"
-              >
-                <div class="history-icon">
-                  <i class="fas" :class="getHistoryIcon(item.type)"></i>
+            
+            <!-- История для авторизованных пользователей -->
+            <div v-else>
+              <div class="history-list" v-if="searchHistory.length">
+                <div 
+                  v-for="(item, index) in searchHistory" 
+                  :key="item.id || index"
+                  @click="applySearchHistory(item)"
+                  class="history-item"
+                  :title="`Нажмите, чтобы найти ${item.term || item.query}`"
+                >
+                  <i class="fas" :class="getHistoryIcon(item.type || item.search_type)"></i>
+                  <div class="history-content">
+                    <span class="history-term">"{{ item.term || item.query }}"</span>
+                    <div class="history-details">
+                      <span class="history-type">{{ getHistoryTypeLabel(item.type || item.search_type) }}</span>
+                      <span class="history-time">{{ formatHistoryTime(item.timestamp || item.created_at) }}</span>
+                      <span v-if="item.resultsCount !== undefined || item.results_count !== undefined" 
+                            class="history-results">
+                        Найдено: {{ item.resultsCount || item.results_count || 0 }}
+                      </span>
+                    </div>
+                    <div v-if="item.corpus || item.floor" class="history-location">
+                      <span v-if="item.corpus">Корпус {{ item.corpus }}</span>
+                      <span v-if="item.floor">, Этаж {{ item.floor }}</span>
+                    </div>
+                  </div>
                 </div>
-                <div class="history-content">
-                  <span class="history-term">{{ item.term }}</span>
-                  <span class="history-type">{{ getHistoryTypeName(item.type) }}</span>
-                </div>
-                <span class="history-time">{{ formatTime(item.timestamp) }}</span>
               </div>
-            </div>
-            <div v-if="!searchHistory.length" class="empty-state">
-              <i class="fas fa-history"></i>
-              <p>История поиска пуста</p>
-              <span>Здесь появятся ваши недавние поиски</span>
+              <div v-else class="empty-state">
+                <i class="fas fa-history"></i>
+                <p>История поиска пуста</p>
+                <span>Здесь появятся ваши недавние поиски</span>
+              </div>
             </div>
           </div>
 
@@ -591,7 +623,7 @@
                 </div>
                 <div class="schedule-list">
                   <div 
-                    v-for="item in groupedSchedule" 
+                    v-for="item in sortedSchedule" 
                     :key="item.key"
                     class="schedule-item"
                   >
@@ -609,7 +641,7 @@
                     </div>
                   </div>
                 </div>
-                <div v-if="!groupedSchedule.length" class="empty-state">
+                <div v-if="!sortedSchedule.length" class="empty-state">
                   <i class="fas fa-calendar-times"></i>
                   <p>Занятий в этот день нет</p>
                 </div>
@@ -793,6 +825,1032 @@ export default {
       { id: 'info', label: 'Информация' },
       { id: 'menu', label: 'Меню' }
     ];
+
+    // Функция для преобразования времени в минуты для сортировки
+    const timeToMinutes = (timeStr) => {
+      if (!timeStr) return 0;
+      const [hours, minutes] = timeStr.split(':').map(Number);
+      return hours * 60 + minutes;
+    };
+
+    // Computed properties
+    const viewModeIcon = computed(() => {
+      return viewMode.value === '2d' ? 'fa-cube' : 'fa-map';
+    });
+
+    const viewModeText = computed(() => {
+      return viewMode.value === '2d' ? '3D Вид' : '2D Вид';
+    });
+
+    const currentMapImage = computed(() => {
+      return `/img/maps/${selectedCorpus.value}corpus/${selectedFloor.value}floor.png`;
+    });
+
+    const filteredAudiences = computed(() => {
+      return audiences.value
+        .filter(audience => 
+          audience.corpus === selectedCorpus.value && 
+          audience.floor === selectedFloor.value &&
+          (selectedFilters.value.length === 0 || selectedFilters.value.includes(audience.audience_type))
+        )
+        .map(audience => ({
+          ...audience,
+          highlighted: shouldHighlightAudience(audience)
+        }));
+    });
+
+    const showScheduleSection = computed(() => {
+      if (!currentAudience.value.audience_type) return false;
+      const scheduleAllowedTypes = ['lecture', 'computer', 'study'];
+      return scheduleAllowedTypes.includes(currentAudience.value.audience_type);
+    });
+
+    const filteredSchedule = computed(() => {
+      if (!currentAudience.value.id) return [];
+      return schedule.value.filter(item => 
+        item.day_week === selectedDay.value
+      );
+    });
+
+    const groupedSchedule = computed(() => {
+      if (!filteredSchedule.value.length) return [];
+      
+      const groupsMap = new Map();
+      
+      filteredSchedule.value.forEach(item => {
+        const key = `${item.time_start}-${item.time_over}-${item.lesson_id}-${item.teacher_id}`;
+        
+        if (groupsMap.has(key)) {
+          const existing = groupsMap.get(key);
+          const groupExists = existing.groups.some(g => g.id === item.group_id);
+          if (!groupExists) {
+            existing.groups.push({
+              id: item.group_id,
+              name_group: item.name_group
+            });
+          }
+        } else {
+          groupsMap.set(key, {
+            key,
+            time_start: item.time_start,
+            time_over: item.time_over,
+            name_lesson: item.name_lesson,
+            surname: item.surname,
+            name: item.name,
+            patronymic: item.patronymic,
+            lesson_id: item.lesson_id,
+            teacher_id: item.teacher_id,
+            groups: [{
+              id: item.group_id,
+              name_group: item.name_group
+            }]
+          });
+        }
+      });
+      
+      return Array.from(groupsMap.values());
+    });
+
+    // ИСПРАВЛЕННОЕ: Сортировка расписания от меньшего времени к большему
+    const sortedSchedule = computed(() => {
+      return [...groupedSchedule.value].sort((a, b) => {
+        const aStart = timeToMinutes(a.time_start);
+        const bStart = timeToMinutes(b.time_start);
+        return aStart - bStart;
+      });
+    });
+
+    const getMenuByCategory = computed(() => {
+      if (selectedCategory.value === 'все') {
+        return buffetMenu.value;
+      }
+      return buffetMenu.value.filter(item => item.category === selectedCategory.value);
+    });
+
+    const menuCategories = computed(() => {
+      const categories = ['все', ...new Set(buffetMenu.value.map(item => item.category))];
+      return categories;
+    });
+
+    const searchResults = computed(() => {
+      const searchValue = getSearchValue(activeSearchTab.value);
+      if (!searchValue) return [];
+
+      switch (activeSearchTab.value) {
+        case 'audience':
+          return audiences.value
+            .filter(aud => aud.num_audiences.toLowerCase().includes(searchValue.toLowerCase()))
+            .map(aud => ({
+              id: aud.id,
+              title: `Аудитория ${aud.num_audiences}`,
+              subtitle: `${aud.corpus} корпус, ${aud.floor} этаж`,
+              type: 'audience',
+              data: aud
+            }));
+        case 'group':
+          return groups.value
+            .filter(group => group.name_group.toLowerCase().includes(searchValue.toLowerCase()))
+            .map(group => ({
+              id: group.id,
+              title: group.name_group,
+              subtitle: 'Учебная группа',
+              type: 'group',
+              data: group
+            }));
+        case 'teacher':
+          return teachers.value
+            .filter(teacher => 
+              `${teacher.surname} ${teacher.name} ${teacher.patronymic}`.toLowerCase().includes(searchValue.toLowerCase())
+            )
+            .map(teacher => ({
+              id: teacher.id,
+              title: `${teacher.surname} ${teacher.name} ${teacher.patronymic}`,
+              subtitle: teacher.post,
+              type: 'teacher',
+              data: teacher
+            }));
+        default:
+          return [];
+      }
+    });
+
+    // Methods
+    const getAudienceTypeName = (type) => {
+      const types = {
+        'lecture': 'Лекционный зал',
+        'lab': 'Лаборатория',
+        'study': 'Учебный кабинет',
+        'computer': 'Компьютерный класс',
+        'conference': 'Конференц-зал',
+        'toilet': 'Туалет',
+        'cafe': 'Буфет',
+        'library': 'Библиотека',
+        'cabinet': 'Кабинет',
+        'other': 'Другое'
+      };
+      return types[type] || type;
+    };
+
+    // Функция для получения правильного названия комнаты
+    const getRoomDisplayName = (audience) => {
+      if (!audience) return '';
+      
+      const numAudiences = audience.num_audiences;
+      const audienceType = audience.audience_type;
+      
+      // Если это туалет, показываем "Туалет" вместо номера
+      if (audienceType === 'toilet') {
+        return 'Туалет';
+      }
+      
+      // Если это буфет, показываем "Буфет" вместо номера
+      if (audienceType === 'cafe') {
+        return 'Буфет';
+      }
+      
+      // Если это библиотека, показываем "Библиотека" вместо номера
+      if (audienceType === 'library') {
+        return 'Библиотека';
+      }
+      
+      // Для остальных типов показываем номер аудитории
+      return `Аудитория ${numAudiences}`;
+    };
+
+    // Функция для получения правильного названия для поиска
+    const getSearchDisplayName = (audience) => {
+      if (!audience) return '';
+      
+      const numAudiences = audience.num_audiences;
+      const audienceType = audience.audience_type;
+      
+      if (audienceType === 'toilet') {
+        return 'Туалет';
+      }
+      
+      if (audienceType === 'cafe') {
+        return 'Буфет';
+      }
+      
+      if (audienceType === 'library') {
+        return 'Библиотека';
+      }
+      
+      return numAudiences;
+    };
+
+    // Обновленная функция поиска аудиторий
+    const searchAudiences = async () => {
+      if (audienceSearch.value.trim().length >= 3) {
+        const searchTerm = audienceSearch.value.toLowerCase().trim();
+        
+        // Специальные случаи поиска
+        if (searchTerm === 'туалет' || searchTerm === 'tualet' || searchTerm === 'уборная') {
+          const toilets = audiences.value.filter(aud => aud.audience_type === 'toilet');
+          handleSearchResults(toilets, 'Туалет');
+          return;
+        }
+        
+        if (searchTerm === 'буфет' || searchTerm === 'byst' || searchTerm === 'столовая') {
+          const cafes = audiences.value.filter(aud => aud.audience_type === 'cafe');
+          handleSearchResults(cafes, 'Буфет');
+          return;
+        }
+        
+        if (searchTerm === 'библиотека' || searchTerm === 'library') {
+          const libraries = audiences.value.filter(aud => aud.audience_type === 'library');
+          handleSearchResults(libraries, 'Библиотека');
+          return;
+        }
+        
+        // Обычный поиск по номеру аудитории
+        const results = audiences.value.filter(aud => 
+          aud.num_audiences.toLowerCase().includes(searchTerm)
+        );
+        
+        handleSearchResults(results, audienceSearch.value.trim());
+      } else {
+        searchResultAudiences.value.clear();
+      }
+    };
+
+    const handleSearchResults = (results, searchTerm) => {
+      searchResultAudiences.value.clear();
+      
+      if (results.length > 0) {
+        results.forEach(aud => {
+          searchResultAudiences.value.add(aud.id);
+        });
+        
+        const currentFloorResults = results.filter(aud => 
+          aud.corpus === selectedCorpus.value && aud.floor === selectedFloor.value
+        );
+        
+        if (currentFloorResults.length > 0) {
+          centerToAudience(currentFloorResults[0]);
+        } else {
+          const firstResult = results[0];
+          selectedCorpus.value = firstResult.corpus;
+          selectedFloor.value = firstResult.floor;
+          
+          nextTick(() => {
+            centerToAudience(firstResult);
+          });
+        }
+        
+        // Сохраняем в историю
+        addToSearchHistory(searchTerm, 'Аудитория', results.length);
+        audienceSearch.value = '';
+      } else {
+        // Сохраняем даже если результатов нет
+        addToSearchHistory(searchTerm, 'Аудитория', 0);
+      }
+    };
+
+    // Обновленная функция для отображения результатов поиска
+    const getSearchResultTitle = (result) => {
+      if (result.type === 'audience') {
+        return getRoomDisplayName(result.data);
+      }
+      return result.title;
+    };
+
+    // Обновленная функция для модального окна
+    const openModal = async (audience) => {
+      currentAudience.value = audience;
+      currentImages.value = [
+        audience.image1,
+        audience.image2,
+        audience.image3
+      ].filter(img => img);
+      
+      showModal.value = true;
+      activeModalTab.value = 'schedule';
+      
+      isLoadingModalData.value = true;
+      
+      try {
+        const promises = [];
+        
+        const scheduleAllowedTypes = ['lecture', 'computer', 'study'];
+        if (scheduleAllowedTypes.includes(audience.audience_type)) {
+          promises.push(fetchSchedule(audience.id));
+        }
+        
+        if (audience.audience_type === 'cafe') {
+          promises.push(fetchBuffetMenu());
+        }
+        
+        if (promises.length > 0) {
+          await Promise.all(promises);
+        }
+      } catch (error) {
+        console.error('Ошибка загрузки данных модального окна:', error);
+      } finally {
+        isLoadingModalData.value = false;
+      }
+    };
+
+    // Добавить состояние загрузки для лучшего UX
+    const isLoadingModalData = ref(false);
+
+    // Остальные методы остаются без изменений...
+    const toggleViewMode = async () => {
+      if (viewMode.value === '2d') {
+        viewMode.value = '3d';
+        await nextTick();
+        init3DScene();
+        load3DFloor();
+      } else {
+        viewMode.value = '2d';
+        cleanup3D();
+        nextTick(() => {
+          centerMap();
+        });
+      }
+    };
+
+    const toggleMobileMenu = () => {
+      showMobileMenu.value = !showMobileMenu.value;
+    };
+
+    const closeMobileMenu = () => {
+      showMobileMenu.value = false;
+    };
+
+    const togglePanel = (panel) => {
+      if (activePanel.value === panel) {
+        activePanel.value = null;
+      } else {
+        activePanel.value = panel;
+        closeMobileMenu();
+      }
+    };
+
+    const closePanel = () => {
+      activePanel.value = null;
+    };
+
+    const toggleQuickActions = () => {
+      showQuickActions.value = !showQuickActions.value;
+    };
+
+    const toggleFavoriteMode = () => {
+      favoriteMode.value = !favoriteMode.value;
+    };
+
+    const getPanelIcon = (panel) => {
+      const icons = {
+        'search': 'fa-search',
+        'history': 'fa-history',
+        'filters': 'fa-filter'
+      };
+      return icons[panel] || 'fa-cog';
+    };
+
+    const getPanelTitle = (panel) => {
+      const titles = {
+        'search': 'Поиск',
+        'history': 'История',
+        'filters': 'Фильтры'
+      };
+      return titles[panel] || 'Панель';
+    };
+
+    const getSearchTabIcon = (tab) => {
+      const tabConfig = searchTabs.find(t => t.id === tab);
+      return tabConfig ? tabConfig.icon : 'fa-search';
+    };
+
+    const getSearchValue = (tab) => {
+      switch (tab) {
+        case 'audience': return audienceSearch.value;
+        case 'group': return groupSearch.value;
+        case 'teacher': return teacherSearch.value;
+        default: return '';
+      }
+    };
+
+    const getSearchPlaceholder = (tab) => {
+      switch (tab) {
+        case 'audience': return 'Номер аудитории или "туалет", "буфет"...';
+        case 'group': return 'Название группы...';
+        case 'teacher': return 'ФИО преподавателя...';
+        default: return 'Поиск...';
+      }
+    };
+
+    const onSearchInput = (tab, event) => {
+      const value = event.target.value;
+      switch (tab) {
+        case 'audience':
+          audienceSearch.value = value;
+          debounceSearchAudiences();
+          break;
+        case 'group':
+          groupSearch.value = value;
+          debounceSearchGroups();
+          break;
+        case 'teacher':
+          teacherSearch.value = value;
+          debounceSearchTeachers();
+          break;
+      }
+    };
+
+    const clearSearch = (tab) => {
+      switch (tab) {
+        case 'audience':
+          audienceSearch.value = '';
+          break;
+        case 'group':
+          groupSearch.value = '';
+          break;
+        case 'teacher':
+          teacherSearch.value = '';
+          break;
+      }
+      highlightedAudiences.value.clear();
+      searchResultAudiences.value.clear();
+    };
+
+    const getQuickSearchItems = (tab) => {
+      switch (tab) {
+        case 'audience':
+          return ['228', 'туалет', '226', 'буфет', 'библиотека'];
+        case 'group':
+          return ['ПИ-401', 'ПИ-301', 'ИСТ-401', 'ИСТ-101'];
+        case 'teacher':
+          return ['Казаков', 'Кондратенко', 'Кулачков'];
+        default:
+          return [];
+      }
+    };
+
+    const applyQuickSearch = (tab, item) => {
+      switch (tab) {
+        case 'audience':
+          audienceSearch.value = item;
+          searchAudiences();
+          break;
+        case 'group':
+          groupSearch.value = item;
+          searchGroups();
+          break;
+        case 'teacher':
+          teacherSearch.value = item;
+          searchTeachers();
+          break;
+      }
+    };
+
+    const getResultIcon = (result) => {
+      const icons = {
+        'audience': 'fa-door-open',
+        'group': 'fa-users',
+        'teacher': 'fa-chalkboard-teacher'
+      };
+      return icons[result.type] || 'fa-search';
+    };
+
+    const handleSearchResultClick = (result) => {
+      switch (result.type) {
+        case 'audience':
+          centerToAudience(result.data);
+          closePanel();
+          break;
+        case 'group':
+          groupSearch.value = result.data.name_group;
+          searchGroups();
+          break;
+        case 'teacher':
+          teacherSearch.value = `${result.data.surname} ${result.data.name}`;
+          searchTeachers();
+          break;
+      }
+    };
+
+    const getHistoryIcon = (type) => {
+      const icons = {
+        'Аудитория': 'fa-door-open',
+        'Группа': 'fa-users',
+        'Преподаватель': 'fa-chalkboard-teacher'
+      };
+      return icons[type] || 'fa-search';
+    };
+
+    const getHistoryTypeName = (type) => {
+      const names = {
+        'Аудитория': 'Аудитория',
+        'Группа': 'Группа',
+        'Преподаватель': 'Преподаватель'
+      };
+      return names[type] || type;
+    };
+
+    const formatTime = (timestamp) => {
+      if (!timestamp) return '';
+      
+      try {
+        const date = new Date(timestamp);
+        if (isNaN(date.getTime())) {
+          // Если это уже отформатированная строка времени
+          if (typeof timestamp === 'string' && timestamp.includes(':')) {
+            return timestamp.split(':').slice(0, 2).join(':');
+          }
+          return '';
+        }
+        
+        return date.toLocaleTimeString('ru-RU', { 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        });
+      } catch (error) {
+        console.error('Ошибка форматирования времени:', error);
+        return '';
+      }
+    };
+
+    const clearHistory = async () => {
+      if (user.value) {
+        try {
+          await axios.delete('/api/profile/search-history');
+        } catch (error) {
+          console.error('Ошибка очистки истории поиска:', error);
+        }
+      }
+      localStorage.removeItem('searchHistory');
+      searchHistory.value = [];
+    };
+
+    const toggleFilter = (filter) => {
+      const index = selectedFilters.value.indexOf(filter);
+      if (index > -1) {
+        selectedFilters.value.splice(index, 1);
+      } else {
+        selectedFilters.value.push(filter);
+      }
+    };
+
+    const resetFilters = () => {
+      selectedFilters.value = [];
+      showOnlyAvailable.value = false;
+      showEquipment.value = false;
+    };
+
+    const applyFilters = () => {
+      closePanel();
+    };
+
+    const handleMenuNavigation = (panel) => {
+      togglePanel(panel);
+    };
+
+    const getAudienceIcon = (type) => {
+      const icons = {
+        'lecture': 'fa-chalkboard',
+        'lab': 'fa-flask',
+        'study': 'fa-book',
+        'computer': 'fa-laptop-code',
+        'conference': 'fa-users',
+        'toilet': 'fa-toilet',
+        'cafe': 'fa-coffee',
+        'library': 'fa-book-open',
+        'cabinet': 'fa-door-closed'
+      };
+      return icons[type] || 'fa-door-open';
+    };
+
+    const getCategoryName = (category) => {
+      const categoryNames = {
+        'все': 'Все категории',
+        'выпечка': 'Выпечка',
+        'напитки': 'Напитки',
+        'салат': 'Салаты',
+        'первое блюдо': 'Первые блюда',
+        'второе блюдо': 'Вторые блюда',
+        'гарнир': 'Гарниры',
+        'десерт': 'Десерты'
+      };
+      return categoryNames[category] || category;
+    };
+
+    const formatPrice = (price) => {
+      return new Intl.NumberFormat('ru-RU', {
+        style: 'currency',
+        currency: 'RUB',
+        minimumFractionDigits: 0
+      }).format(price);
+    };
+
+    const getAudienceColor = (type, opacity = 1) => {
+      const colors = {
+        lecture: `rgba(67, 97, 238, ${opacity})`,
+        lab: `rgba(67, 97, 238, ${opacity})`,
+        study: `rgba(67, 97, 238, ${opacity})`,
+        computer: `rgba(67, 97, 238, ${opacity})`,
+        conference: `rgba(67, 97, 238, ${opacity})`,
+        toilet: `rgba(67, 97, 238, ${opacity})`,
+        cafe: `rgba(67, 97, 238, ${opacity})`,
+        library: `rgba(67, 97, 238, ${opacity})`,
+        cabinet: `rgba(67, 97, 238, ${opacity})`
+      };
+      return colors[type] || colors.study;
+    };
+
+    const getAudienceStrokeColor = (audience) => {
+      if (isSearchResult(audience)) {
+        return '#10b981';
+      }
+      return getAudienceColor(audience.audience_type);
+    };
+
+    const isSearchResult = (audience) => {
+      return searchResultAudiences.value.has(audience.id);
+    };
+
+    const fetchAudiences = async () => {
+      try {
+        const response = await axios.get('/api/audiences');
+        audiences.value = response.data;
+      } catch (error) {
+        console.error('Ошибка загрузки аудиторий:', error);
+      }
+    };
+
+    const fetchGroups = async () => {
+      try {
+        const response = await axios.get('/api/groups');
+        groups.value = response.data;
+      } catch (error) {
+        console.error('Ошибка загрузки групп:', error);
+        groups.value = [];
+      }
+    };
+
+    const fetchTeachers = async () => {
+      try {
+        const response = await axios.get('/api/teachers');
+        teachers.value = response.data;
+      } catch (error) {
+        console.error('Ошибка загрузки преподавателей:', error);
+        teachers.value = [];
+      }
+    };
+
+    const fetchSchedule = async (audienceId) => {
+      try {
+        const response = await axios.get(`/api/schedule/${audienceId}`);
+        schedule.value = response.data;
+      } catch (error) {
+        console.error('Ошибка загрузки расписания:', error);
+      }
+    };
+
+    const shouldHighlightAudience = (audience) => {
+      if (audienceSearch.value.length >= 3 && 
+          audience.num_audiences.toLowerCase().includes(audienceSearch.value.toLowerCase())) {
+        return true;
+      }
+      
+      return highlightedAudiences.value.has(audience.id) || searchResultAudiences.value.has(audience.id);
+    };
+
+    const centerToAudience = (audience) => {
+      const audienceCenterX = audience.x + audience.width / 2;
+      const audienceCenterY = audience.y + audience.height / 2;
+      zoomToPoint(audienceCenterX, audienceCenterY, zoomConfig.value.initial);
+    };
+
+    const searchGroups = async () => {
+      if (groupSearch.value.trim().length < 2) {
+        highlightedAudiences.value.clear();
+        searchResultAudiences.value.clear();
+        return;
+      }
+
+      try {
+        const response = await axios.get(`/api/schedule/group/${encodeURIComponent(groupSearch.value.trim())}`);
+        const groupSchedule = response.data;
+        
+        highlightedAudiences.value.clear();
+        searchResultAudiences.value.clear();
+        
+        groupSchedule.forEach(item => {
+          if (item.audience_id) {
+            highlightedAudiences.value.add(item.audience_id);
+            searchResultAudiences.value.add(item.audience_id);
+          }
+        });
+        
+        if (groupSchedule.length > 0) {
+          const firstResult = groupSchedule[0];
+          if (firstResult.audience_id) {
+            const audience = audiences.value.find(a => a.id === firstResult.audience_id);
+            if (audience) {
+              selectedCorpus.value = audience.corpus;
+              selectedFloor.value = audience.floor;
+              
+              nextTick(() => {
+                centerToAudience(audience);
+              });
+            }
+          }
+        }
+        
+        // Сохраняем в историю
+        await addToSearchHistory(groupSearch.value, 'Группа', groupSchedule.length);
+        groupSearch.value = '';
+      } catch (error) {
+        console.error('Ошибка поиска по группам:', error);
+        highlightedAudiences.value.clear();
+        searchResultAudiences.value.clear();
+      }
+    };
+
+    const searchTeachers = async () => {
+      if (teacherSearch.value.trim().length < 3) {
+        highlightedAudiences.value.clear();
+        searchResultAudiences.value.clear();
+        return;
+      }
+
+      try {
+        const response = await axios.get(`/api/schedule/teacher/${encodeURIComponent(teacherSearch.value.trim())}`);
+        const teacherSchedule = response.data;
+        
+        highlightedAudiences.value.clear();
+        searchResultAudiences.value.clear();
+        
+        teacherSchedule.forEach(item => {
+          if (item.audience_id) {
+            highlightedAudiences.value.add(item.audience_id);
+            searchResultAudiences.value.add(item.audience_id);
+          }
+        });
+        
+        if (teacherSchedule.length > 0) {
+          const firstResult = teacherSchedule[0];
+          if (firstResult.audience_id) {
+            const audience = audiences.value.find(a => a.id === firstResult.audience_id);
+            if (audience) {
+              selectedCorpus.value = audience.corpus;
+              selectedFloor.value = audience.floor;
+              
+              nextTick(() => {
+                centerToAudience(audience);
+              });
+            }
+          }
+        }
+        
+        // Сохраняем в историю
+        await addToSearchHistory(teacherSearch.value, 'Преподаватель', teacherSchedule.length);
+        teacherSearch.value = '';
+      } catch (error) {
+        console.error('Ошибка поиска по преподавателям:', error);
+        highlightedAudiences.value.clear();
+        searchResultAudiences.value.clear();
+      }
+    };
+
+    const debounceSearchAudiences = () => {
+      clearTimeout(searchAudienceTimeout);
+      searchAudienceTimeout = setTimeout(searchAudiences, 500);
+    };
+
+    const debounceSearchGroups = () => {
+      clearTimeout(searchGroupTimeout);
+      searchGroupTimeout = setTimeout(searchGroups, 500);
+    };
+
+    const debounceSearchTeachers = () => {
+      clearTimeout(searchTeacherTimeout);
+      searchTeacherTimeout = setTimeout(searchTeachers, 500);
+    };
+
+    const addToSearchHistory = async (term, type, resultsCount = 0) => {
+      console.log('Сохранение в историю:', { term, type, resultsCount });
+      
+      if (!term || term.trim() === '') {
+        return;
+      }
+      
+      if (!user.value) {
+        saveToLocalStorage(term, type, resultsCount);
+        return;
+      }
+      
+      try {
+        await axios.post('/api/profile/search-history', {
+          search_type: type.toLowerCase(),
+          query: term,
+          results_count: resultsCount,
+          corpus: selectedCorpus.value,
+          floor: selectedFloor.value
+        });
+        
+        await loadSearchHistory();
+        
+      } catch (error) {
+        console.error('Ошибка сохранения истории поиска:', error);
+        saveToLocalStorage(term, type, resultsCount);
+      }
+    };
+
+    const saveToLocalStorage = (term, type, resultsCount = 0) => {
+      if (!term || term.trim() === '') {
+        return;
+      }
+      
+      const history = JSON.parse(localStorage.getItem('searchHistory') || '[]');
+      
+      const existingIndex = history.findIndex(
+        item => item.term === term && item.type === type
+      );
+      
+      // Создаем дату для форматирования
+      const now = new Date();
+      const formattedTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}, ${now.getDate().toString().padStart(2, '0')}.${(now.getMonth() + 1).toString().padStart(2, '0')}`;
+      
+      if (existingIndex !== -1) {
+        history[existingIndex] = {
+          ...history[existingIndex],
+          timestamp: formattedTime,
+          resultsCount: resultsCount,
+          corpus: selectedCorpus.value,
+          floor: selectedFloor.value
+        };
+      } else {
+        history.unshift({
+          id: Date.now(),
+          term: term.trim(),
+          type,
+          timestamp: formattedTime,
+          resultsCount: resultsCount,
+          corpus: selectedCorpus.value,
+          floor: selectedFloor.value
+        });
+      }
+      
+      if (history.length > 10) {
+        history.splice(10);
+      }
+      
+      localStorage.setItem('searchHistory', JSON.stringify(history));
+      
+      if (!user.value) {
+        searchHistory.value = history;
+      }
+    };
+
+    const applySearchHistory = async (item) => {
+      closePanel();
+      
+      audienceSearch.value = '';
+      groupSearch.value = '';
+      teacherSearch.value = '';
+      
+      const searchType = item.type || item.search_type;
+      const searchTerm = item.term || item.query;
+      
+      console.log('Применение истории:', { searchType, searchTerm, item });
+      
+      switch (searchType.toLowerCase()) {
+        case 'аудитория':
+        case 'audience':
+          audienceSearch.value = searchTerm;
+          await nextTick();
+          await searchAudiences();
+          break;
+          
+        case 'группа':
+        case 'group':
+          groupSearch.value = searchTerm;
+          await nextTick();
+          await searchGroups();
+          break;
+          
+        case 'преподаватель':
+        case 'teacher':
+          teacherSearch.value = searchTerm;
+          await nextTick();
+          await searchTeachers();
+          break;
+          
+        default:
+          console.warn('Неизвестный тип поиска:', searchType);
+          break;
+      }
+      
+      if (item.corpus) {
+        selectCorpus(item.corpus);
+      }
+      if (item.floor) {
+        selectFloor(item.floor);
+      }
+    };
+
+    const closeModal = () => {
+      showModal.value = false;
+    };
+
+    const openFullscreen = (image) => {
+      fullscreenImage.value = image;
+      showFullscreen.value = true;
+    };
+
+    const closeFullscreen = () => {
+      showFullscreen.value = false;
+    };
+
+    const goToAuth = () => {
+      router.push('/auth');
+    };
+
+    const logout = () => {
+      localStorage.removeItem('user');
+      user.value = null;
+      router.push('/auth');
+    };
+
+    const goToProfile = () => {
+      router.push('/profile');
+      closeMobileMenu();
+    };
+
+    const toggleUserMenu = () => {
+      goToProfile();
+    };
+
+    const goToUniversityMap = () => {
+      router.push('/');
+    };
+
+    const isFavorite = (audience) => {
+      return false;
+    };
+
+    const toggleFavorite = (audience) => {
+      // Заглушка для функционала избранного
+    };
+
+    const shareAudience = () => {
+      if (navigator.share) {
+        navigator.share({
+          title: getRoomDisplayName(currentAudience.value),
+          text: `${getRoomDisplayName(currentAudience.value)} в БГИТУ`,
+          url: window.location.href
+        });
+      }
+    };
+
+    const navigateToAudience = () => {
+      alert('Функция навигации будет реализована в будущем');
+    };
+
+    const shareLocation = () => {
+      if (navigator.share) {
+        navigator.share({
+          title: 'Мое местоположение в БГИТУ',
+          text: 'Я нахожусь в БГИТУ',
+          url: window.location.href
+        });
+      }
+    };
+
+    const selectCorpus = (corpus) => {
+      selectedCorpus.value = corpus;
+      selectedFloor.value = '1';
+      if (viewMode.value === '3d') {
+        load3DFloor();
+      } else {
+        nextTick(() => {
+          resetView();
+        });
+      }
+    };
+
+    const selectFloor = async (floor) => {
+      selectedFloor.value = floor;
+      if (viewMode.value === '3d') {
+        load3DFloor();
+      } else {
+        nextTick(() => {
+          resetView();
+        });
+      }
+    };
+
+    const fetchBuffetMenu = async () => {
+      try {
+        const response = await axios.get('/api/buffet-menu');
+        buffetMenu.value = response.data;
+      } catch (error) {
+        console.error('Ошибка загрузки меню:', error);
+        buffetMenu.value = [];
+      }
+    };
 
     // ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ МАСШТАБИРОВАНИЯ
     const getPositionForScale = (targetScale) => {
@@ -1064,818 +2122,6 @@ export default {
       return icons[floor] || 'fa-layer-group';
     };
 
-    // Computed properties
-    const viewModeIcon = computed(() => {
-      return viewMode.value === '2d' ? 'fa-cube' : 'fa-map';
-    });
-
-    const viewModeText = computed(() => {
-      return viewMode.value === '2d' ? '3D Вид' : '2D Вид';
-    });
-
-    const currentMapImage = computed(() => {
-      return `/img/maps/${selectedCorpus.value}corpus/${selectedFloor.value}floor.png`;
-    });
-
-    const filteredAudiences = computed(() => {
-      return audiences.value
-        .filter(audience => 
-          audience.corpus === selectedCorpus.value && 
-          audience.floor === selectedFloor.value &&
-          (selectedFilters.value.length === 0 || selectedFilters.value.includes(audience.audience_type))
-        )
-        .map(audience => ({
-          ...audience,
-          highlighted: shouldHighlightAudience(audience)
-        }));
-    });
-
-    const showScheduleSection = computed(() => {
-      if (!currentAudience.value.audience_type) return false;
-      const scheduleAllowedTypes = ['lecture', 'computer', 'study'];
-      return scheduleAllowedTypes.includes(currentAudience.value.audience_type);
-    });
-
-    const filteredSchedule = computed(() => {
-      if (!currentAudience.value.id) return [];
-      return schedule.value.filter(item => 
-        item.day_week === selectedDay.value
-      );
-    });
-
-    const groupedSchedule = computed(() => {
-      if (!filteredSchedule.value.length) return [];
-      
-      const groupsMap = new Map();
-      
-      filteredSchedule.value.forEach(item => {
-        const key = `${item.time_start}-${item.time_over}-${item.lesson_id}-${item.teacher_id}`;
-        
-        if (groupsMap.has(key)) {
-          const existing = groupsMap.get(key);
-          const groupExists = existing.groups.some(g => g.id === item.group_id);
-          if (!groupExists) {
-            existing.groups.push({
-              id: item.group_id,
-              name_group: item.name_group
-            });
-          }
-        } else {
-          groupsMap.set(key, {
-            key,
-            time_start: item.time_start,
-            time_over: item.time_over,
-            name_lesson: item.name_lesson,
-            surname: item.surname,
-            name: item.name,
-            patronymic: item.patronymic,
-            lesson_id: item.lesson_id,
-            teacher_id: item.teacher_id,
-            groups: [{
-              id: item.group_id,
-              name_group: item.name_group
-            }]
-          });
-        }
-      });
-      
-      return Array.from(groupsMap.values());
-    });
-
-    const getMenuByCategory = computed(() => {
-      if (selectedCategory.value === 'все') {
-        return buffetMenu.value;
-      }
-      return buffetMenu.value.filter(item => item.category === selectedCategory.value);
-    });
-
-    const menuCategories = computed(() => {
-      const categories = ['все', ...new Set(buffetMenu.value.map(item => item.category))];
-      return categories;
-    });
-
-    const searchResults = computed(() => {
-      const searchValue = getSearchValue(activeSearchTab.value);
-      if (!searchValue) return [];
-
-      switch (activeSearchTab.value) {
-        case 'audience':
-          return audiences.value
-            .filter(aud => aud.num_audiences.toLowerCase().includes(searchValue.toLowerCase()))
-            .map(aud => ({
-              id: aud.id,
-              title: `Аудитория ${aud.num_audiences}`,
-              subtitle: `${aud.corpus} корпус, ${aud.floor} этаж`,
-              type: 'audience',
-              data: aud
-            }));
-        case 'group':
-          return groups.value
-            .filter(group => group.name_group.toLowerCase().includes(searchValue.toLowerCase()))
-            .map(group => ({
-              id: group.id,
-              title: group.name_group,
-              subtitle: 'Учебная группа',
-              type: 'group',
-              data: group
-            }));
-        case 'teacher':
-          return teachers.value
-            .filter(teacher => 
-              `${teacher.surname} ${teacher.name} ${teacher.patronymic}`.toLowerCase().includes(searchValue.toLowerCase())
-            )
-            .map(teacher => ({
-              id: teacher.id,
-              title: `${teacher.surname} ${teacher.name} ${teacher.patronymic}`,
-              subtitle: teacher.post,
-              type: 'teacher',
-              data: teacher
-            }));
-        default:
-          return [];
-      }
-    });
-
-    // Methods
-    const toggleViewMode = async () => {
-      if (viewMode.value === '2d') {
-        viewMode.value = '3d';
-        await nextTick();
-        init3DScene();
-        load3DFloor();
-      } else {
-        viewMode.value = '2d';
-        cleanup3D();
-        nextTick(() => {
-          centerMap();
-        });
-      }
-    };
-
-    const toggleMobileMenu = () => {
-      showMobileMenu.value = !showMobileMenu.value;
-    };
-
-    const closeMobileMenu = () => {
-      showMobileMenu.value = false;
-    };
-
-    const togglePanel = (panel) => {
-      if (activePanel.value === panel) {
-        activePanel.value = null;
-      } else {
-        activePanel.value = panel;
-        closeMobileMenu();
-      }
-    };
-
-    const closePanel = () => {
-      activePanel.value = null;
-    };
-
-    const toggleQuickActions = () => {
-      showQuickActions.value = !showQuickActions.value;
-    };
-
-    const toggleFavoriteMode = () => {
-      favoriteMode.value = !favoriteMode.value;
-    };
-
-    const getPanelIcon = (panel) => {
-      const icons = {
-        'search': 'fa-search',
-        'history': 'fa-history',
-        'filters': 'fa-filter'
-      };
-      return icons[panel] || 'fa-cog';
-    };
-
-    const getPanelTitle = (panel) => {
-      const titles = {
-        'search': 'Поиск',
-        'history': 'История',
-        'filters': 'Фильтры'
-      };
-      return titles[panel] || 'Панель';
-    };
-
-    const getSearchTabIcon = (tab) => {
-      const tabConfig = searchTabs.find(t => t.id === tab);
-      return tabConfig ? tabConfig.icon : 'fa-search';
-    };
-
-    const getSearchValue = (tab) => {
-      switch (tab) {
-        case 'audience': return audienceSearch.value;
-        case 'group': return groupSearch.value;
-        case 'teacher': return teacherSearch.value;
-        default: return '';
-      }
-    };
-
-    const getSearchPlaceholder = (tab) => {
-      switch (tab) {
-        case 'audience': return 'Номер аудитории...';
-        case 'group': return 'Название группы...';
-        case 'teacher': return 'ФИО преподавателя...';
-        default: return 'Поиск...';
-      }
-    };
-
-    const onSearchInput = (tab, event) => {
-      const value = event.target.value;
-      switch (tab) {
-        case 'audience':
-          audienceSearch.value = value;
-          debounceSearchAudiences();
-          break;
-        case 'group':
-          groupSearch.value = value;
-          debounceSearchGroups();
-          break;
-        case 'teacher':
-          teacherSearch.value = value;
-          debounceSearchTeachers();
-          break;
-      }
-    };
-
-    const clearSearch = (tab) => {
-      switch (tab) {
-        case 'audience':
-          audienceSearch.value = '';
-          break;
-        case 'group':
-          groupSearch.value = '';
-          break;
-        case 'teacher':
-          teacherSearch.value = '';
-          break;
-      }
-      highlightedAudiences.value.clear();
-      searchResultAudiences.value.clear();
-    };
-
-    const getQuickSearchItems = (tab) => {
-      switch (tab) {
-        case 'audience':
-          return ['228', 'туалет', '226', 'буфет'];
-        case 'group':
-          return ['ПИ-401', 'ПИ-301', 'ИСТ-401', 'ИСТ-101'];
-        case 'teacher':
-          return ['Казаков', 'Кондратенко', 'Кулачков'];
-        default:
-          return [];
-      }
-    };
-
-    const applyQuickSearch = (tab, item) => {
-      switch (tab) {
-        case 'audience':
-          audienceSearch.value = item;
-          searchAudiences();
-          break;
-        case 'group':
-          groupSearch.value = item;
-          searchGroups();
-          break;
-        case 'teacher':
-          teacherSearch.value = item;
-          searchTeachers();
-          break;
-      }
-    };
-
-    const getResultIcon = (result) => {
-      const icons = {
-        'audience': 'fa-door-open',
-        'group': 'fa-users',
-        'teacher': 'fa-chalkboard-teacher'
-      };
-      return icons[result.type] || 'fa-search';
-    };
-
-    const handleSearchResultClick = (result) => {
-      switch (result.type) {
-        case 'audience':
-          centerToAudience(result.data);
-          closePanel();
-          break;
-        case 'group':
-          groupSearch.value = result.data.name_group;
-          searchGroups();
-          break;
-        case 'teacher':
-          teacherSearch.value = `${result.data.surname} ${result.data.name}`;
-          searchTeachers();
-          break;
-      }
-    };
-
-    const getHistoryIcon = (type) => {
-      const icons = {
-        'Аудитория': 'fa-door-open',
-        'Группа': 'fa-users',
-        'Преподаватель': 'fa-chalkboard-teacher'
-      };
-      return icons[type] || 'fa-search';
-    };
-
-    const getHistoryTypeName = (type) => {
-      const names = {
-        'Аудитория': 'Аудитория',
-        'Группа': 'Группа',
-        'Преподаватель': 'Преподаватель'
-      };
-      return names[type] || type;
-    };
-
-    const formatTime = (timestamp) => {
-      return new Date(timestamp).toLocaleTimeString('ru-RU', { 
-        hour: '2-digit', 
-        minute: '2-digit' 
-      });
-    };
-
-    const clearHistory = () => {
-      searchHistory.value = [];
-    };
-
-    const toggleFilter = (filter) => {
-      const index = selectedFilters.value.indexOf(filter);
-      if (index > -1) {
-        selectedFilters.value.splice(index, 1);
-      } else {
-        selectedFilters.value.push(filter);
-      }
-    };
-
-    const resetFilters = () => {
-      selectedFilters.value = [];
-      showOnlyAvailable.value = false;
-      showEquipment.value = false;
-    };
-
-    const applyFilters = () => {
-      closePanel();
-    };
-
-    const handleMenuNavigation = (panel) => {
-      togglePanel(panel);
-    };
-
-    const getAudienceTypeName = (type) => {
-      const types = {
-        'lecture': 'Лекционный зал',
-        'lab': 'Лаборатория',
-        'study': 'Учебный кабинет',
-        'computer': 'Компьютерный класс',
-        'conference': 'Конференц-зал',
-        'toilet': 'Туалет',
-        'cafe': 'Буфет',
-        'library': 'Библиотека',
-        'cabinet': 'Кабинет',
-        'other': 'Другое'
-      };
-      return types[type] || type;
-    };
-
-    const getAudienceIcon = (type) => {
-      const icons = {
-        'lecture': 'fa-chalkboard',
-        'lab': 'fa-flask',
-        'study': 'fa-book',
-        'computer': 'fa-laptop-code',
-        'conference': 'fa-users',
-        'toilet': 'fa-toilet',
-        'cafe': 'fa-coffee',
-        'library': 'fa-book-open',
-        'cabinet': 'fa-door-closed'
-      };
-      return icons[type] || 'fa-door-open';
-    };
-
-    const getCategoryName = (category) => {
-      const categoryNames = {
-        'все': 'Все категории',
-        'выпечка': 'Выпечка',
-        'напитки': 'Напитки',
-        'салат': 'Салаты',
-        'первое блюдо': 'Первые блюда',
-        'второе блюдо': 'Вторые блюда',
-        'гарнир': 'Гарниры',
-        'десерт': 'Десерты'
-      };
-      return categoryNames[category] || category;
-    };
-
-    const formatPrice = (price) => {
-      return new Intl.NumberFormat('ru-RU', {
-        style: 'currency',
-        currency: 'RUB',
-        minimumFractionDigits: 0
-      }).format(price);
-    };
-
-    const getAudienceColor = (type, opacity = 1) => {
-      const colors = {
-        lecture: `rgba(67, 97, 238, ${opacity})`,
-        lab: `rgba(67, 97, 238, ${opacity})`,
-        study: `rgba(67, 97, 238, ${opacity})`,
-        computer: `rgba(67, 97, 238, ${opacity})`,
-        conference: `rgba(67, 97, 238, ${opacity})`,
-        toilet: `rgba(67, 97, 238, ${opacity})`,
-        cafe: `rgba(67, 97, 238, ${opacity})`,
-        library: `rgba(67, 97, 238, ${opacity})`,
-        cabinet: `rgba(67, 97, 238, ${opacity})`
-      };
-      return colors[type] || colors.study;
-    };
-
-    const getAudienceStrokeColor = (audience) => {
-      if (isSearchResult(audience)) {
-        return '#10b981';
-      }
-      return getAudienceColor(audience.audience_type);
-    };
-
-    const isSearchResult = (audience) => {
-      return searchResultAudiences.value.has(audience.id);
-    };
-
-    const fetchAudiences = async () => {
-      try {
-        const response = await axios.get('/api/audiences');
-        audiences.value = response.data;
-      } catch (error) {
-        console.error('Ошибка загрузки аудиторий:', error);
-      }
-    };
-
-    const fetchGroups = async () => {
-      try {
-        const response = await axios.get('/api/groups');
-        groups.value = response.data;
-      } catch (error) {
-        console.error('Ошибка загрузки групп:', error);
-        groups.value = [];
-      }
-    };
-
-    const fetchTeachers = async () => {
-      try {
-        const response = await axios.get('/api/teachers');
-        teachers.value = response.data;
-      } catch (error) {
-        console.error('Ошибка загрузки преподавателей:', error);
-        teachers.value = [];
-      }
-    };
-
-    const fetchSchedule = async (audienceId) => {
-      try {
-        const response = await axios.get(`/api/schedule/${audienceId}`);
-        schedule.value = response.data;
-      } catch (error) {
-        console.error('Ошибка загрузки расписания:', error);
-      }
-    };
-
-    const shouldHighlightAudience = (audience) => {
-      if (audienceSearch.value.length >= 3 && 
-          audience.num_audiences.toLowerCase().includes(audienceSearch.value.toLowerCase())) {
-        return true;
-      }
-      
-      return highlightedAudiences.value.has(audience.id) || searchResultAudiences.value.has(audience.id);
-    };
-
-    const searchAudiences = () => {
-      if (audienceSearch.value.trim().length >= 3) {
-        addToSearchHistory(audienceSearch.value, 'Аудитория');
-        
-        searchResultAudiences.value.clear();
-        
-        const foundAudiences = audiences.value.filter(aud => 
-          aud.num_audiences.toLowerCase().includes(audienceSearch.value.toLowerCase())
-        );
-        
-        if (foundAudiences.length > 0) {
-          foundAudiences.forEach(aud => {
-            searchResultAudiences.value.add(aud.id);
-          });
-          
-          const currentFloorResults = foundAudiences.filter(aud => 
-            aud.corpus === selectedCorpus.value && aud.floor === selectedFloor.value
-          );
-          
-          if (currentFloorResults.length > 0) {
-            centerToAudience(currentFloorResults[0]);
-          } else {
-            const firstResult = foundAudiences[0];
-            selectedCorpus.value = firstResult.corpus;
-            selectedFloor.value = firstResult.floor;
-            
-            nextTick(() => {
-              centerToAudience(firstResult);
-            });
-          }
-          
-          audienceSearch.value = '';
-        }
-      } else {
-        searchResultAudiences.value.clear();
-      }
-    };
-
-    const centerToAudience = (audience) => {
-      const audienceCenterX = audience.x + audience.width / 2;
-      const audienceCenterY = audience.y + audience.height / 2;
-      zoomToPoint(audienceCenterX, audienceCenterY, zoomConfig.value.initial);
-    };
-
-    const searchGroups = async () => {
-      if (groupSearch.value.trim().length < 2) {
-        highlightedAudiences.value.clear();
-        searchResultAudiences.value.clear();
-        return;
-      }
-
-      try {
-        const response = await axios.get(`/api/schedule/group/${encodeURIComponent(groupSearch.value.trim())}`);
-        const groupSchedule = response.data;
-        
-        highlightedAudiences.value.clear();
-        searchResultAudiences.value.clear();
-        
-        groupSchedule.forEach(item => {
-          if (item.audience_id) {
-            highlightedAudiences.value.add(item.audience_id);
-            searchResultAudiences.value.add(item.audience_id);
-          }
-        });
-        
-        if (groupSchedule.length > 0) {
-          const firstResult = groupSchedule[0];
-          if (firstResult.audience_id) {
-            const audience = audiences.value.find(a => a.id === firstResult.audience_id);
-            if (audience) {
-              selectedCorpus.value = audience.corpus;
-              selectedFloor.value = audience.floor;
-              
-              nextTick(() => {
-                centerToAudience(audience);
-              });
-            }
-          }
-        }
-        
-        addToSearchHistory(groupSearch.value, 'Группа');
-        groupSearch.value = '';
-      } catch (error) {
-        console.error('Ошибка поиска по группам:', error);
-        highlightedAudiences.value.clear();
-        searchResultAudiences.value.clear();
-      }
-    };
-
-    const searchTeachers = async () => {
-      if (teacherSearch.value.trim().length < 3) {
-        highlightedAudiences.value.clear();
-        searchResultAudiences.value.clear();
-        return;
-      }
-
-      try {
-        const response = await axios.get(`/api/schedule/teacher/${encodeURIComponent(teacherSearch.value.trim())}`);
-        const teacherSchedule = response.data;
-        
-        highlightedAudiences.value.clear();
-        searchResultAudiences.value.clear();
-        
-        teacherSchedule.forEach(item => {
-          if (item.audience_id) {
-            highlightedAudiences.value.add(item.audience_id);
-            searchResultAudiences.value.add(item.audience_id);
-          }
-        });
-        
-        if (teacherSchedule.length > 0) {
-          const firstResult = teacherSchedule[0];
-          if (firstResult.audience_id) {
-            const audience = audiences.value.find(a => a.id === firstResult.audience_id);
-            if (audience) {
-              selectedCorpus.value = audience.corpus;
-              selectedFloor.value = audience.floor;
-              
-              nextTick(() => {
-                centerToAudience(audience);
-              });
-            }
-          }
-        }
-        
-        addToSearchHistory(teacherSearch.value, 'Преподаватель');
-        teacherSearch.value = '';
-      } catch (error) {
-        console.error('Ошибка поиска по преподавателям:', error);
-        highlightedAudiences.value.clear();
-        searchResultAudiences.value.clear();
-      }
-    };
-
-    const debounceSearchAudiences = () => {
-      clearTimeout(searchAudienceTimeout);
-      searchAudienceTimeout = setTimeout(searchAudiences, 500);
-    };
-
-    const debounceSearchGroups = () => {
-      clearTimeout(searchGroupTimeout);
-      searchGroupTimeout = setTimeout(searchGroups, 500);
-    };
-
-    const debounceSearchTeachers = () => {
-      clearTimeout(searchTeacherTimeout);
-      searchTeacherTimeout = setTimeout(searchTeachers, 500);
-    };
-
-    const addToSearchHistory = (term, type) => {
-      const existingIndex = searchHistory.value.findIndex(
-        item => item.term === term && item.type === type
-      );
-      
-      if (existingIndex !== -1) {
-        searchHistory.value[existingIndex].timestamp = new Date().toLocaleTimeString();
-      } else {
-        searchHistory.value.unshift({
-          term,
-          type,
-          timestamp: new Date().toLocaleTimeString()
-        });
-      }
-      
-      if (searchHistory.value.length > 10) {
-        searchHistory.value = searchHistory.value.slice(0, 10);
-      }
-    };
-
-    const applySearchHistory = (item) => {
-      switch (item.type) {
-        case 'Аудитория':
-          audienceSearch.value = item.term;
-          searchAudiences();
-          break;
-        case 'Группа':
-          groupSearch.value = item.term;
-          searchGroups();
-          break;
-        case 'Преподаватель':
-          teacherSearch.value = item.term;
-          searchTeachers();
-          break;
-      }
-      closePanel();
-    };
-
-    // Добавить состояние загрузки для лучшего UX
-    const isLoadingModalData = ref(false);
-    
-    const openModal = async (audience) => {
-      currentAudience.value = audience;
-      currentImages.value = [
-        audience.image1,
-        audience.image2,
-        audience.image3
-      ].filter(img => img);
-      
-      showModal.value = true;
-      activeModalTab.value = 'schedule';
-      
-      isLoadingModalData.value = true;
-      
-      try {
-        const promises = [];
-        
-        const scheduleAllowedTypes = ['lecture', 'computer', 'study'];
-        if (scheduleAllowedTypes.includes(audience.audience_type)) {
-          promises.push(fetchSchedule(audience.id));
-        }
-        
-        if (audience.audience_type === 'cafe') {
-          promises.push(fetchBuffetMenu());
-        }
-        
-        if (promises.length > 0) {
-          await Promise.all(promises);
-        }
-      } catch (error) {
-        console.error('Ошибка загрузки данных модального окна:', error);
-      } finally {
-        isLoadingModalData.value = false;
-      }
-    };
-    
-    const closeModal = () => {
-      showModal.value = false;
-    };
-
-    const openFullscreen = (image) => {
-      fullscreenImage.value = image;
-      showFullscreen.value = true;
-    };
-
-    const closeFullscreen = () => {
-      showFullscreen.value = false;
-    };
-
-    const goToAuth = () => {
-      router.push('/auth');
-    };
-
-    const logout = () => {
-      localStorage.removeItem('user');
-      user.value = null;
-      router.push('/auth');
-    };
-
-    const goToProfile = () => {
-      router.push('/profile');
-      closeMobileMenu();
-    };
-
-    const toggleUserMenu = () => {
-      goToProfile();
-    };
-
-    const goToUniversityMap = () => {
-      router.push('/');
-    };
-
-    const isFavorite = (audience) => {
-      return false;
-    };
-
-    const toggleFavorite = (audience) => {
-      // Заглушка для функционала избранного
-    };
-
-    const shareAudience = () => {
-      if (navigator.share) {
-        navigator.share({
-          title: `Аудитория ${currentAudience.value.num_audiences}`,
-          text: `Аудитория ${currentAudience.value.num_audiences} в БГИТУ`,
-          url: window.location.href
-        });
-      }
-    };
-
-    const navigateToAudience = () => {
-      alert('Функция навигации будет реализована в будущем');
-    };
-
-    const shareLocation = () => {
-      if (navigator.share) {
-        navigator.share({
-          title: 'Мое местоположение в БГИТУ',
-          text: 'Я нахожусь в БГИТУ',
-          url: window.location.href
-        });
-      }
-    };
-
-    const selectCorpus = (corpus) => {
-      selectedCorpus.value = corpus;
-      selectedFloor.value = '1';
-      if (viewMode.value === '3d') {
-        load3DFloor();
-      } else {
-        nextTick(() => {
-          resetView();
-        });
-      }
-    };
-
-    const selectFloor = async (floor) => {
-      selectedFloor.value = floor;
-      if (viewMode.value === '3d') {
-        load3DFloor();
-      } else {
-        nextTick(() => {
-          resetView();
-        });
-      }
-    };
-
-    const fetchBuffetMenu = async () => {
-      try {
-        const response = await axios.get('/api/buffet-menu');
-        buffetMenu.value = response.data;
-      } catch (error) {
-        console.error('Ошибка загрузки меню:', error);
-        buffetMenu.value = [];
-      }
-    };
-
     // Panel drag methods
     const startPanelDrag = (event) => {
       // Заглушка для перетаскивания панели
@@ -2005,6 +2251,96 @@ export default {
           createAudienceObjects3D();
         }
       );
+    };
+
+    const loadSearchHistory = async () => {
+      if (user.value) {
+        try {
+          const response = await axios.get('/api/profile/search-history');
+          console.log('History from API:', response.data);
+          
+          searchHistory.value = response.data.map(item => ({
+            id: item.id,
+            term: item.query,
+            type: getHistoryTypeLabel(item.search_type),
+            timestamp: formatHistoryTime(item.created_at),
+            resultsCount: item.results_count,
+            corpus: item.corpus,
+            floor: item.floor,
+            search_type: item.search_type,
+            query: item.query,
+            results_count: item.results_count,
+            created_at: item.created_at
+          }));
+          
+        } catch (error) {
+          console.error('Ошибка загрузки истории поиска:', error);
+          searchHistory.value = [];
+        }
+      } else {
+        loadFromLocalStorage();
+      }
+    };
+
+    const loadFromLocalStorage = () => {
+      const history = JSON.parse(localStorage.getItem('searchHistory') || '[]');
+      searchHistory.value = history;
+    };
+
+    const getHistoryTypeLabel = (type) => {
+      const types = {
+        'audience': 'Аудитория',
+        'group': 'Группа',
+        'teacher': 'Преподаватель',
+        'аудитория': 'Аудитория',
+        'группа': 'Группа',
+        'преподаватель': 'Преподаватель'
+      };
+      return types[type.toLowerCase()] || type;
+    };
+
+    const formatHistoryTime = (timestamp) => {
+      if (!timestamp) return '';
+      
+      try {
+        const date = new Date(timestamp);
+        
+        // Проверяем, что дата валидна
+        if (isNaN(date.getTime())) {
+          // Если дата невалидна, пытаемся обработать как строку времени
+          if (typeof timestamp === 'string' && timestamp.includes(':')) {
+            return timestamp.split(':').slice(0, 2).join(':');
+          }
+          return '';
+        }
+        
+        // Форматируем как "HH:MM, ДД.ММ"
+        const hours = date.getHours().toString().padStart(2, '0');
+        const minutes = date.getMinutes().toString().padStart(2, '0');
+        const day = date.getDate().toString().padStart(2, '0');
+        const month = (date.getMonth() + 1).toString().padStart(2, '0');
+        
+        return `${hours}:${minutes}, ${day}.${month}`;
+        
+      } catch (error) {
+        console.error('Ошибка форматирования времени истории:', error);
+        
+        // Fallback: пытаемся извлечь время из строки
+        if (typeof timestamp === 'string') {
+          if (timestamp.includes('T')) {
+            // ISO формат: 2025-10-28T13:32:19.871Z
+            const timePart = timestamp.split('T')[1]?.split(':');
+            if (timePart && timePart.length >= 2) {
+              return `${timePart[0]}:${timePart[1]}`;
+            }
+          } else if (timestamp.includes(':')) {
+            // Просто время: 13:32:19
+            return timestamp.split(':').slice(0, 2).join(':');
+          }
+        }
+        
+        return '';
+      }
     };
 
     const createFallbackFloor = () => {
@@ -2278,6 +2614,7 @@ export default {
       await fetchAudiences();
       await fetchGroups();
       await fetchTeachers();
+      await loadSearchHistory(); // Добавьте эту строку
       
       scale.value = zoomConfig.value.initial;
       centerMap();
@@ -2295,6 +2632,25 @@ export default {
         window.removeEventListener('resize', onWindowResize);
       };
     });
+
+    const getAvatarUrl = (avatarPath) => {
+      if (!avatarPath || avatarPath === '/img/default-avatar.png') {
+        return '/img/default-avatar.png';
+      }
+      
+      if (avatarPath.startsWith('http')) {
+        return avatarPath;
+      }
+      
+      if (avatarPath.startsWith('/uploads/')) {
+        const baseUrl = window.location.hostname === 'localhost' 
+          ? 'http://localhost:3001' 
+          : '';
+        return `${baseUrl}${avatarPath}?t=${new Date().getTime()}`;
+      }
+      
+      return `${avatarPath}?t=${new Date().getTime()}`;
+    };
 
     onUnmounted(() => {
       cleanup3D();
@@ -2381,6 +2737,7 @@ export default {
       currentMapImage,
       filteredAudiences,
       groupedSchedule,
+      sortedSchedule, // Добавлено исправленное расписание
       searchResults,
       viewModeIcon,
       viewModeText,
@@ -2413,6 +2770,10 @@ export default {
       getAudienceStrokeColor,
       isSearchResult,
       centerToAudience,
+      formatHistoryTime,
+      getRoomDisplayName, // Добавлено
+      getSearchDisplayName, // Добавлено
+      getSearchResultTitle, // Добавлено
 
       // Остальные методы
       toggleViewMode,
@@ -2439,6 +2800,7 @@ export default {
       getSearchTabIcon,
       getSearchValue,
       getSearchPlaceholder,
+      getAvatarUrl,
       onSearchInput,
       clearSearch,
       getQuickSearchItems,
@@ -2459,6 +2821,7 @@ export default {
       getAudienceColor,
       getCurrentZoomPreset,
       getCategoryName,
+      getHistoryTypeLabel,
       formatPrice,
       startPanelDrag,
       openModal,
@@ -2601,7 +2964,7 @@ export default {
 .burger-menu {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: space-around;
   width: 28px;
   height: 28px;
   background: none;
@@ -2804,6 +3167,62 @@ export default {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   font-weight: 600;
+}
+
+.auth-message {
+  text-align: center;
+  padding: 40px 20px;
+  background: var(--bg-tertiary);
+  border-radius: 16px;
+  margin: 20px 0;
+}
+
+.auth-icon {
+  font-size: 3rem;
+  color: var(--accent-primary);
+  margin-bottom: 16px;
+}
+
+.auth-message h4 {
+  margin: 0 0 12px 0;
+  color: var(--text-primary);
+  font-size: 1.2rem;
+}
+
+.auth-message p {
+  margin: 0 0 24px 0;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  font-size: 0.9rem;
+}
+
+.auth-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  color: white;
+  border: none;
+  border-radius: 12px;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.clear-history-btn {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  padding: 8px;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+
+.clear-history-btn:active {
+  background: var(--bg-tertiary);
+  color: #e53e3e;
 }
 
 .menu-grid {
@@ -3467,6 +3886,12 @@ export default {
   color: var(--accent-primary);
 }
 
+.panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .close-panel {
   width: 36px;
   height: 36px;
@@ -3490,6 +3915,27 @@ export default {
   flex: 1;
   overflow-y: auto;
   padding: 20px;
+}
+
+.history-details {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.history-results {
+  font-size: 0.8rem;
+  color: var(--accent-primary);
+  background: rgba(67, 97, 238, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.history-location {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  margin-top: 2px;
 }
 
 /* Стили для панели поиска */
@@ -3651,6 +4097,26 @@ export default {
 
 .clear-history:active {
   background: var(--bg-secondary);
+}
+
+.clear-history-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 18px;
+  border: none;
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.clear-history-btn:active {
+  background: var(--bg-secondary);
+  color: #e53e3e;
+  transform: scale(0.95);
 }
 
 .history-list {

@@ -1,6 +1,6 @@
 <template>
   <div class="profile-main-container">
-    <!-- Навигационная панель как на главной -->
+    <!-- Навигационная панель -->
     <nav class="top-nav glassmorphism">
       <div class="logo">
         <i><img src="/img/logo.jpg" class="logo_img"></i>
@@ -19,7 +19,7 @@
       <div class="user-actions">
         <div class="user-profile" v-if="user">
           <div class="avatar-wrapper">
-            <img :src="user.avatar || '/img/default-avatar.png'" class="user-avatar" alt="Аватар">
+            <img :src="getAvatarUrl(user.avatar || user.avatar_url)" class="user-avatar" alt="Аватар">
           </div>
           <span class="username">{{ user.username }}</span>
           <button @click="logout" class="logout-btn">
@@ -38,13 +38,14 @@
             <div class="avatar-section">
               <div class="avatar-container">
                 <img 
-                  :src="user.avatar || '/img/default-avatar.png'" 
+                  :src="getAvatarUrl(user.avatar || user.avatar_url)" 
                   alt="Аватар" 
                   class="profile-avatar"
                   @click="triggerAvatarUpload"
                 >
                 <div class="avatar-overlay" @click="triggerAvatarUpload">
                   <i class="fas fa-camera"></i>
+                  <span>Сменить фото</span>
                 </div>
                 <input 
                   type="file" 
@@ -56,6 +57,14 @@
               </div>
               <h2 class="username">{{ user.username }}</h2>
               <p class="user-role">{{ user.role === 'admin' ? 'Администратор' : 'Пользователь' }}</p>
+              
+              <!-- Прогресс загрузки -->
+              <div v-if="uploadProgress > 0" class="upload-progress">
+                <div class="progress-bar">
+                  <div class="progress-fill" :style="{ width: uploadProgress + '%' }"></div>
+                </div>
+                <span class="progress-text">{{ uploadProgress }}%</span>
+              </div>
             </div>
           </div>
 
@@ -471,9 +480,8 @@ export default {
     const passwordLoading = ref(false);
     const settingsLoading = ref(false);
     const showDeleteConfirm = ref(false);
-    const success = ref('');
-    const error = ref('');
     const avatarInput = ref(null);
+    const uploadProgress = ref(0);
     
     // Password visibility
     const showCurrentPassword = ref(false);
@@ -502,6 +510,8 @@ export default {
     });
     
     const errors = ref({});
+    const success = ref('');
+    const error = ref('');
     
     // Mock data for activity
     const userStats = ref({
@@ -539,7 +549,7 @@ export default {
       { id: 'settings', name: 'Настройки', icon: 'fas fa-cog' }
     ];
     
-    // Computed
+    // Computed properties
     const passwordStrength = computed(() => {
       const password = passwordData.value.newPassword;
       if (!password) return '';
@@ -562,26 +572,281 @@ export default {
     });
     
     // Methods
+    const getAvatarUrl = (avatarPath) => {
+      console.log('Current avatar path:', avatarPath);
+      
+      // Если avatarPath undefined, используем avatar_url из user.value
+      const actualPath = avatarPath || user.value?.avatar_url;
+      
+      if (!actualPath || actualPath === '/img/default-avatar.png') {
+        return '/img/default-avatar.png';
+      }
+      
+      if (actualPath.startsWith('http')) {
+        return actualPath;
+      }
+      
+      // Для аватаров из uploads добавляем базовый URL сервера
+      if (actualPath.startsWith('/uploads/')) {
+        // В development режиме используем полный URL к серверу
+        const baseUrl = window.location.hostname === 'localhost' 
+          ? 'http://localhost:3001' 
+          : '';
+        return `${baseUrl}${actualPath}?t=${new Date().getTime()}`;
+      }
+      
+      // Для других путей (например, дефолтных) используем как есть
+      return `${actualPath}?t=${new Date().getTime()}`;
+    };
+    
+    const triggerAvatarUpload = () => {
+      avatarInput.value?.click();
+    };
+    
+    const handleAvatarUpload = async (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      console.log('Selected file:', file);
+
+      // Валидация файла
+      const validImageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+      if (!validImageTypes.includes(file.type)) {
+        error.value = 'Пожалуйста, выберите файл изображения (JPEG, PNG, GIF, WebP)';
+        return;
+      }
+
+      if (file.size > 5 * 1024 * 1024) {
+        error.value = 'Размер файла не должен превышать 5MB';
+        return;
+      }
+
+      // Создаем FormData
+      const formData = new FormData();
+      formData.append('avatar', file);
+
+      try {
+        uploadProgress.value = 10;
+        
+        const token = localStorage.getItem('token');
+        const response = await axios.post('/api/auth/me/avatar', formData, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'multipart/form-data'
+          },
+          onUploadProgress: (progressEvent) => {
+            if (progressEvent.total) {
+              const percentCompleted = Math.round(
+                (progressEvent.loaded * 100) / progressEvent.total
+              );
+              uploadProgress.value = percentCompleted;
+            }
+          },
+          timeout: 30000 // 30 секунд таймаут
+        });
+
+        uploadProgress.value = 100;
+        
+        console.log('Upload response:', response.data);
+
+        if (response.data.success) {
+          // Обновляем аватар пользователя
+          user.value.avatar = response.data.avatarUrl;
+          user.value.avatar_url = response.data.avatarUrl; // Обновляем оба свойства
+          localStorage.setItem('user', JSON.stringify(user.value));
+          
+          success.value = response.data.message || 'Аватар успешно обновлен!';
+          
+          // Сбрасываем прогресс через секунду
+          setTimeout(() => {
+            uploadProgress.value = 0;
+          }, 1000);
+        } else {
+          throw new Error(response.data.error || 'Ошибка загрузки');
+        }
+        
+      } catch (err) {
+        console.error('Avatar upload error:', err);
+        uploadProgress.value = 0;
+        
+        if (err.response?.data?.error) {
+          error.value = err.response.data.error;
+        } else if (err.code === 'ECONNABORTED') {
+          error.value = 'Таймаут загрузки. Попробуйте еще раз.';
+        } else {
+          error.value = 'Ошибка загрузки аватара. Проверьте подключение к интернету.';
+        }
+      } finally {
+        // Сбрасываем input файла
+        if (avatarInput.value) {
+          avatarInput.value.value = '';
+        }
+      }
+    };
+    
     const loadProfile = async () => {
       try {
-        const response = await axios.get('/api/auth/me');
+        const token = localStorage.getItem('token');
+        if (!token) {
+          router.push('/auth');
+          return;
+        }
+
+        const response = await axios.get('/api/auth/me/full', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        
         const userData = response.data;
+        console.log('Loaded user data:', userData);
+        
+        // Нормализуем данные аватара
+        userData.avatar = userData.avatar_url;
+        
+        user.value = userData;
         
         formData.value = {
           username: userData.username,
           email: userData.email,
-          group: userData.group || '',
+          group: userData.group_name || '',
           bio: userData.bio || ''
         };
         
-        // Load settings from localStorage
-        const savedSettings = localStorage.getItem('userSettings');
-        if (savedSettings) {
-          settings.value = { ...settings.value, ...JSON.parse(savedSettings) };
+        // Загружаем настройки если они есть
+        if (userData.settings) {
+          settings.value = { ...settings.value, ...userData.settings };
         }
+        
+        // Сохраняем в localStorage
+        localStorage.setItem('user', JSON.stringify(userData));
+        
       } catch (err) {
         console.error('Ошибка загрузки профиля:', err);
-        error.value = 'Не удалось загрузить данные профиля';
+        if (err.response?.status === 401) {
+          localStorage.removeItem('user');
+          localStorage.removeItem('token');
+          router.push('/auth');
+        } else {
+          error.value = 'Не удалось загрузить данные профиля';
+        }
+      }
+    };
+    
+    const updateProfile = async () => {
+      if (!validateForm()) return;
+      
+      loading.value = true;
+      try {
+        const token = localStorage.getItem('token');
+        const response = await axios.put('/api/auth/me', formData.value, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        
+        // Обновляем пользователя в localStorage
+        const updatedUser = {
+          ...user.value,
+          username: response.data.username,
+          email: response.data.email,
+          group_name: response.data.group,
+          bio: response.data.bio,
+          avatar_url: response.data.avatar, // Сохраняем avatar_url
+          avatar: response.data.avatar      // И avatar для совместимости
+        };
+        localStorage.setItem('user', JSON.stringify(updatedUser));
+        user.value = updatedUser;
+        
+        success.value = 'Профиль успешно обновлен!';
+        setTimeout(() => success.value = '', 3000);
+      } catch (err) {
+        console.error('Update profile error:', err);
+        if (err.response?.data?.error) {
+          error.value = err.response.data.error;
+        } else {
+          error.value = 'Ошибка при обновлении профиля';
+        }
+      } finally {
+        loading.value = false;
+      }
+    };
+    
+    const updatePassword = async () => {
+      if (!validatePassword()) return;
+      
+      passwordLoading.value = true;
+      try {
+        const token = localStorage.getItem('token');
+        await axios.put('/api/auth/me/password', {
+          currentPassword: passwordData.value.currentPassword,
+          newPassword: passwordData.value.newPassword
+        }, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        
+        success.value = 'Пароль успешно обновлен!';
+        passwordData.value = {
+          currentPassword: '',
+          newPassword: '',
+          confirmPassword: ''
+        };
+        setTimeout(() => success.value = '', 3000);
+      } catch (err) {
+        console.error('Update password error:', err);
+        if (err.response?.data?.error) {
+          error.value = err.response.data.error;
+        } else {
+          error.value = 'Ошибка при обновлении пароля';
+        }
+      } finally {
+        passwordLoading.value = false;
+      }
+    };
+    
+    const saveSettings = async () => {
+      settingsLoading.value = true;
+      try {
+        const token = localStorage.getItem('token');
+        await axios.put('/api/auth/me/settings', settings.value, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        
+        // Обновляем пользователя
+        const updatedUser = { ...user.value, settings: settings.value };
+        localStorage.setItem('user', JSON.stringify(updatedUser));
+        user.value = updatedUser;
+        
+        success.value = 'Настройки сохранены!';
+        setTimeout(() => success.value = '', 3000);
+      } catch (err) {
+        console.error('Save settings error:', err);
+        error.value = 'Ошибка сохранения настроек';
+      } finally {
+        settingsLoading.value = false;
+      }
+    };
+    
+    const deleteAccount = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        await axios.delete('/api/auth/me', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        
+        localStorage.removeItem('user');
+        localStorage.removeItem('token');
+        router.push('/auth');
+      } catch (err) {
+        console.error('Delete account error:', err);
+        error.value = 'Ошибка удаления аккаунта';
+        showDeleteConfirm.value = false;
       }
     };
     
@@ -590,6 +855,8 @@ export default {
       
       if (!formData.value.username.trim()) {
         errors.value.username = 'Имя пользователя обязательно';
+      } else if (formData.value.username.length < 3) {
+        errors.value.username = 'Имя пользователя должно содержать минимум 3 символа';
       }
       
       if (!formData.value.email.trim()) {
@@ -608,7 +875,9 @@ export default {
         errors.value.currentPassword = 'Текущий пароль обязателен';
       }
       
-      if (passwordData.value.newPassword && passwordData.value.newPassword.length < 6) {
+      if (!passwordData.value.newPassword) {
+        errors.value.newPassword = 'Новый пароль обязателен';
+      } else if (passwordData.value.newPassword.length < 6) {
         errors.value.newPassword = 'Пароль должен содержать минимум 6 символов';
       }
       
@@ -619,148 +888,13 @@ export default {
       return Object.keys(errors.value).length === 0;
     };
     
-    const updateProfile = async () => {
-      if (!validateForm()) return;
-      
-      loading.value = true;
-      try {
-        const response = await axios.put('/api/auth/me', formData.value);
-        
-        // Update user in localStorage
-        const updatedUser = {
-          ...user.value,
-          username: response.data.username,
-          email: response.data.email
-        };
-        localStorage.setItem('user', JSON.stringify(updatedUser));
-        user.value = updatedUser;
-        
-        success.value = 'Профиль успешно обновлен!';
-        setTimeout(() => success.value = '', 3000);
-      } catch (err) {
-        error.value = err.response?.data?.error || 'Ошибка при обновлении профиля';
-        console.error(err);
-      } finally {
-        loading.value = false;
-      }
-    };
-    
-    const updatePassword = async () => {
-      if (!validatePassword()) return;
-      
-      passwordLoading.value = true;
-      try {
-        await axios.put('/api/auth/me/password', {
-          currentPassword: passwordData.value.currentPassword,
-          newPassword: passwordData.value.newPassword
-        });
-        
-        success.value = 'Пароль успешно обновлен!';
-        passwordData.value = {
-          currentPassword: '',
-          newPassword: '',
-          confirmPassword: ''
-        };
-        setTimeout(() => success.value = '', 3000);
-      } catch (err) {
-        error.value = err.response?.data?.error || 'Ошибка при обновлении пароля';
-        console.error(err);
-      } finally {
-        passwordLoading.value = false;
-      }
-    };
-    
-    const handleAvatarUpload = async (event) => {
-      const file = event.target.files[0];
-      if (!file) return;
-
-      // Validate file type and size
-      if (!file.type.startsWith('image/')) {
-        error.value = 'Пожалуйста, выберите изображение';
-        return;
-      }
-
-      if (file.size > 5 * 1024 * 1024) {
-        error.value = 'Размер файла не должен превышать 5MB';
-        return;
-      }
-
-      try {
-        const formData = new FormData();
-        formData.append('avatar', file);
-        
-        loading.value = true;
-        
-        const response = await axios.post('/api/auth/me/avatar', formData, {
-          headers: {
-            'Content-Type': 'multipart/form-data'
-          }
-        });
-        
-        // Update user avatar in local state
-        user.value.avatar = response.data.avatarUrl;
-        localStorage.setItem('user', JSON.stringify(user.value));
-        
-        success.value = 'Аватар успешно обновлен!';
-        setTimeout(() => success.value = '', 3000);
-        
-      } catch (err) {
-        console.error('Avatar upload error:', err);
-        if (err.response?.data?.error) {
-          error.value = err.response.data.error;
-        } else {
-          error.value = 'Ошибка загрузки аватара';
-        }
-      } finally {
-        loading.value = false;
-        // Reset file input
-        if (avatarInput.value) {
-          avatarInput.value.value = '';
-        }
-      }
-    };
-    
-    const triggerAvatarUpload = () => {
-      avatarInput.value?.click();
-    };
-    
-    const saveSettings = async () => {
-      settingsLoading.value = true;
-      try {
-        // Save settings to backend
-        await axios.put('/api/auth/me/settings', settings.value);
-        
-        // Save to localStorage for immediate effect
-        localStorage.setItem('userSettings', JSON.stringify(settings.value));
-        
-        success.value = 'Настройки сохранены!';
-        setTimeout(() => success.value = '', 3000);
-      } catch (err) {
-        error.value = 'Ошибка сохранения настроек';
-        console.error(err);
-      } finally {
-        settingsLoading.value = false;
-      }
-    };
-    
-    const deleteAccount = async () => {
-      try {
-        await axios.delete('/api/auth/me');
-        localStorage.removeItem('user');
-        localStorage.removeItem('userSettings');
-        router.push('/auth');
-      } catch (err) {
-        error.value = 'Ошибка удаления аккаунта';
-        console.error(err);
-      }
-    };
-    
     const resetForm = () => {
       loadProfile();
     };
     
     const logout = () => {
       localStorage.removeItem('user');
+      localStorage.removeItem('token');
       router.push('/auth');
     };
     
@@ -771,10 +905,6 @@ export default {
     
     // Lifecycle
     onMounted(() => {
-      if (!user.value) {
-        router.push('/auth');
-        return;
-      }
       loadProfile();
     });
     
@@ -786,9 +916,8 @@ export default {
       passwordLoading,
       settingsLoading,
       showDeleteConfirm,
-      success,
-      error,
       avatarInput,
+      uploadProgress,
       showCurrentPassword,
       showNewPassword,
       showConfirmPassword,
@@ -796,6 +925,8 @@ export default {
       passwordData,
       settings,
       errors,
+      success,
+      error,
       userStats,
       recentActivity,
       tabs,
@@ -805,10 +936,11 @@ export default {
       strengthText,
       
       // Methods
+      getAvatarUrl,
+      triggerAvatarUpload,
+      handleAvatarUpload,
       updateProfile,
       updatePassword,
-      handleAvatarUpload,
-      triggerAvatarUpload,
       saveSettings,
       deleteAccount,
       resetForm,
@@ -982,14 +1114,22 @@ export default {
   left: 0;
   width: 100%;
   height: 100%;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.7);
   border-radius: 50%;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   opacity: 0;
   transition: all 0.3s ease;
   color: white;
+  text-align: center;
+  padding: 10px;
+}
+
+.avatar-overlay span {
+  font-size: 0.8rem;
+  margin-top: 5px;
 }
 
 .avatar-container:hover .avatar-overlay {
@@ -1676,6 +1816,32 @@ export default {
 
 .cancel-btn:hover {
   background: #4a5568;
+}
+
+.upload-progress {
+  margin-top: 15px;
+  text-align: center;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 6px;
+  background-color: #e2e8f0;
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 5px;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(135deg, #4361ee, #3a0ca3);
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  font-size: 0.8rem;
+  color: #718096;
+  font-weight: 600;
 }
 
 /* Анимации */

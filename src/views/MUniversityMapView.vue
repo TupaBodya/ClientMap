@@ -19,7 +19,7 @@
             <i class="fas" :class="themeIcon"></i>
           </button>
           <div class="user-avatar-mini" @click="toggleUserMenu" :class="{ 'has-notification': hasNotifications }">
-            <img :src="user?.avatar || '/img/default-avatar.png'" alt="Профиль">
+            <img :src="getAvatarUrl(user?.avatar || user?.avatar_url)" alt="Профиль">
           </div>
         </div>
       </div>
@@ -31,7 +31,7 @@
         <div class="mobile-menu" @click.stop>
           <div class="menu-header">
             <div class="menu-user" v-if="user" @click="goToProfile">
-              <img :src="user.avatar || '/img/default-avatar.png'" class="user-avatar-large">
+              <img :src="getAvatarUrl(user.avatar || user.avatar_url)" class="user-avatar-large">
               <div class="user-info">
                 <span class="username">{{ user.username }}</span>
                 <span class="user-status">Онлайн</span>
@@ -922,6 +922,25 @@ setup() {
         }
     };
 
+    const getAvatarUrl = (avatarPath) => {
+      if (!avatarPath || avatarPath === '/img/default-avatar.png') {
+        return '/img/default-avatar.png';
+      }
+      
+      if (avatarPath.startsWith('http')) {
+        return avatarPath;
+      }
+      
+      if (avatarPath.startsWith('/uploads/')) {
+        const baseUrl = window.location.hostname === 'localhost' 
+          ? 'http://localhost:3001' 
+          : '';
+        return `${baseUrl}${avatarPath}?t=${new Date().getTime()}`;
+      }
+      
+      return `${avatarPath}?t=${new Date().getTime()}`;
+    };
+
     const onTouchEnd = (event) => {
         isDragging.value = false;
         isPinching.value = false;
@@ -1614,6 +1633,7 @@ setup() {
         handleSearchResultClick,
         getHistoryIcon,
         getHistoryTypeName,
+        getAvatarUrl,
         formatTime,
         clearHistory,
         applySearchHistory,
