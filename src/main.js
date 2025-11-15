@@ -4,7 +4,7 @@ import router from './router';
 import axios from 'axios';
 
 // Configure axios
-axios.defaults.baseURL = import.meta.env.VITE_API_BASE_URL || 'https://tupabodya-server-0d41.twc1.net/';
+axios.defaults.baseURL = import.meta.env.VITE_API_BASE_URL || 'https://tupabodya-server-63b8.twc1.net/';
 
 // Add request interceptor for auth
 axios.interceptors.request.use(config => {
